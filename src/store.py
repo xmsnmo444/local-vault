@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import math
+import os
 import re
 import sqlite3
 import struct
@@ -48,21 +49,27 @@ class OfflineViolation(RuntimeError):
     """offline=True 时检测到网络访问企图。"""
 
 
-_NETWORK_MODULE_NAMES = ("socket", "requests", "urllib", "http", "httpx")
+# [P1-3] 哨兵引用计数：多个 Store 并存时，只有归零才真正卸载。
+_offline_refcount = 0
 
 
 def assert_offline() -> None:
-    """安装网络访问哨兵：任何 socket 连接在 offline 模式下直接抛错。
+    """安装网络访问哨兵：offline 模式下任何联网企图直接抛错。
 
-    幂等：重复调用只装一次。用 uninstall_offline() 可卸载，便于测试隔离。
+    [P0-2] 覆盖 socket.socket.connect / getaddrinfo / create_connection。
+    [P1-3] 用引用计数支持多 Store 并存，归零才卸载。
     """
+    global _offline_refcount
     import socket
 
+    _offline_refcount += 1
+
     if getattr(socket.socket, "_lv_patched", False):
-        return
+        return  # 已装，计数已加
 
     socket._lv_orig_socket_connect = socket.socket.connect  # type: ignore[attr-defined]
     socket._lv_orig_getaddrinfo = socket.getaddrinfo  # type: ignore[attr-defined]
+    socket._lv_orig_create_connection = socket.create_connection  # type: ignore[attr-defined]
 
     def guarded_connect(self, address):  # type: ignore[no-untyped-def]
         raise OfflineViolation(
@@ -72,19 +79,37 @@ def assert_offline() -> None:
     def guarded_getaddrinfo(*args, **kwargs):  # type: ignore[no-untyped-def]
         raise OfflineViolation("offline mode: DNS disabled")
 
+    def guarded_create_connection(*args, **kwargs):  # type: ignore[no-untyped-def]
+        # [P0-2] socket.create_connection 绕过 socket.connect 需单独拦
+        raise OfflineViolation("offline mode: create_connection disabled")
+
     socket.socket.connect = guarded_connect  # type: ignore[assignment]
     socket.getaddrinfo = guarded_getaddrinfo  # type: ignore[assignment]
+    socket.create_connection = guarded_create_connection  # type: ignore[assignment]
     socket.socket._lv_patched = True  # type: ignore[attr-defined]
 
 
-def uninstall_offline() -> None:
-    """卸载网络哨兵，恢复原始 socket 行为（测试隔离用）。"""
+def uninstall_offline(force: bool = False) -> None:
+    """卸载网络哨兵。
+
+    force=False（默认）：引用计数减一，仅归零时真正卸载。
+    force=True：无条件卸载（测试隔离用）。
+    """
+    global _offline_refcount
     import socket
+
+    if force:
+        _offline_refcount = 0
+    else:
+        _offline_refcount = max(0, _offline_refcount - 1)
+        if _offline_refcount > 0:
+            return
 
     if not getattr(socket.socket, "_lv_patched", False):
         return
     socket.socket.connect = socket._lv_orig_socket_connect  # type: ignore[attr-defined]
     socket.getaddrinfo = socket._lv_orig_getaddrinfo  # type: ignore[attr-defined]
+    socket.create_connection = socket._lv_orig_create_connection  # type: ignore[attr-defined]
     socket.socket._lv_patched = False  # type: ignore[attr-defined]
 
 
@@ -113,15 +138,8 @@ def _hash_embed(text: str, dim: int) -> list[float]:
 
 
 def _tokens_for_embed(text: str) -> list[str]:
-    """英文/数字按词，中文按字符二元。"""
-    out: list[str] = []
-    out.extend(_TOKEN_RE.findall(text.lower()))
-    cjk = re.findall(r"[\u4e00-\u9fff]", text)
-    for i in range(len(cjk)):
-        out.append(cjk[i])
-        if i + 1 < len(cjk):
-            out.append(cjk[i] + cjk[i + 1])
-    return out
+    """[P2-6] 复用统一分词，避免与 BM25 策略漂移。"""
+    return _bm25_tokens(text)
 
 
 def _pack(vec: list[float]) -> bytes:
@@ -187,7 +205,17 @@ class Store:
             );
             """
         )
+        self._migrate(cur)
         self.conn.commit()
+
+    def _migrate(self, cur: sqlite3.Cursor) -> None:
+        """[P1-5] 兼容旧库：缺失的列补上，避免 SELECT 报错。"""
+        cols = {row[1] for row in cur.execute("PRAGMA table_info(chunks)")}
+        if "content_hash" not in cols:
+            cur.execute(
+                "ALTER TABLE chunks ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''"
+            )
+            log.info("已迁移：chunks.content_hash 列已补上（旧库升级）")
 
     def _meta_get(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
@@ -201,25 +229,45 @@ class Store:
         )
 
     def check_model_consistency(self) -> None:
-        """[M4] 维度/模型与库内 meta 不一致时，提示需要 reindex。"""
-        dim = str(self.cfg.embed_dim)
-        model = self.cfg.embed_backend
-        stored_dim = self._meta_get("vec_dim")
-        stored_model = self._meta_get("model_name")
+        """[M4] 维度/模型与库内 meta 不一致时，提示需要 reindex。
 
+        meta 三键：vec_dim / embed_backend / model_name。
+        [P0-1] backend 与 model_name 必须分开存，否则切换 model_name 不触发重建。
+        """
+        dim = str(self.cfg.embed_dim)
+        backend = self.cfg.embed_backend
+        model = self.cfg.model_name
+        keys = {
+            "vec_dim": dim,
+            "embed_backend": backend,
+            "model_name": model,
+        }
+
+        stored_dim = self._meta_get("vec_dim")
         if stored_dim is None:
-            # 首次使用，写入
-            self._meta_set("vec_dim", dim)
-            self._meta_set("model_name", model)
+            # 首次使用，写入全部三键
+            for k, v in keys.items():
+                self._meta_set(k, v)
             self._meta_set("schema_ver", SCHEMA_VER)
             self.conn.commit()
             return
 
-        if stored_dim != dim or stored_model != model:
+        mismatched = []
+        for k, v in keys.items():
+            stored = self._meta_get(k)
+            if stored is not None and stored != v:
+                mismatched.append(f"{k}: 库={stored} 当前={v}")
+            elif stored is None:
+                # 旧库缺键：补齐，不视为不匹配
+                self._meta_set(k, v)
+
+        if mismatched:
+            self.conn.commit()
             raise RuntimeError(
-                f"库内向量不匹配：库中 dim={stored_dim}/model={stored_model}，"
-                f"当前 dim={dim}/model={model}。请删除 {self.cfg.db_path} 后重建索引。"
+                "库内向量不匹配：\n  " + "\n  ".join(mismatched) + "\n"
+                f"请删除 {self.cfg.db_path} 后重建索引。"
             )
+        self.conn.commit()
 
     # ---------- 写入 ----------
     def embed_text(self, text: str) -> list[float]:
@@ -235,8 +283,17 @@ class Store:
         return vec
 
     def _embed_fastembed(self, text: str) -> list[float]:
-        """可选本地模型后端。若未安装 fastembed / 无本地权重则报错，
-        绝不静默联网下载。"""
+        """可选本地模型后端。
+
+        [P0-2] offline 时入口直接熔断，杜绝 TextEmbedding 静默联网下载权重。
+        [MINOR] 首次加载前检查本地缓存目录，缺失则明确报错。
+        """
+        if self.cfg.offline:
+            raise OfflineViolation(
+                "offline mode: fastembed 已禁用（不允许下载模型权重）。"
+                "如需使用，请先离线预置权重，或设 offline=False。"
+            )
+
         try:
             from fastembed import TextEmbedding  # type: ignore
         except ImportError as exc:  # pragma: no cover
@@ -245,7 +302,15 @@ class Store:
             ) from exc
 
         if not hasattr(self, "_fe"):
-            self._fe = TextEmbedding(model_name=self.cfg.model_name)  # pragma: no cover
+            cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "fastembed")
+            if not os.path.isdir(cache_dir):  # pragma: no cover
+                raise RuntimeError(
+                    f"未找到本地模型缓存 {cache_dir}。"
+                    "请先联网下载一次权重，或改用 embed_backend='hash'。"
+                )
+            self._fe = TextEmbedding(  # pragma: no cover
+                model_name=self.cfg.model_name, cache_dir=cache_dir
+            )
         vecs = list(self._fe.embed([text]))  # pragma: no cover
         return [float(x) for x in vecs[0]]  # pragma: no cover
 

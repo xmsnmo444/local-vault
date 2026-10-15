@@ -47,15 +47,23 @@ class Config:
     model_name: str = "BAAI/bge-small-zh-v1.5"
     chunk_size: int = 512          # 以 token 近似，按字符估算
     chunk_overlap: int = 64
-    exts: tuple[str, ...] = (".txt", ".md", ".py", ".json", ".csv", ".log", ".html")
+    exts: tuple[str, ...] = (".txt", ".md", ".markdown", ".py", ".js", ".ts",
+                             ".json", ".csv", ".log", ".html", ".htm",
+                             ".yaml", ".yml", ".toml", ".ini", ".cfg", ".rst")
     max_file_mb: float = 20.0
     embed_batch: int = 32
     offline: bool = True           # 强制离线，True 时禁止任何网络调用
     rrf_k: int = 60                # [M7] RRF 融合常数，可被 search() 覆盖
     embed_backend: str = "hash"    # "hash"(内置，零依赖，v0.1 默认) | "fastembed"(可选)
     embed_dim: int = 256           # [M4] 当前后端向量维度，写入 meta 表
+    skip_dirs: frozenset[str] = ... # [P1-4] 遍历时跳过的目录名集合（.git/node_modules 等）
 
 def load_config(**overrides) -> Config: ...
+```
+
+> [P1-4] 说明：`exts` 已从初版 7 种扩展为 17 种纯文本扩展名（新增 `.markdown/.js/.ts/.htm/.yaml/.yml/.toml/.ini/.cfg/.rst`），并新增 `skip_dirs` 字段。此为正向扩展，已在本表声明。
+> [MINOR] 环境变量兜底：`LV_DB_PATH` / `LV_OFFLINE` / `LV_EXTS` 可覆盖默认值（非契约扩展，属便利功能）。
+> [P1-5] meta 表三键 `vec_dim` / `embed_backend` / `model_name` 分别存储；旧库缺键自动补齐。旧库缺 `content_hash` 列时 `init_schema` 自动 `ALTER TABLE` 迁移；旧库 `content_hash=''` 视为无需二次校验。
 ```
 
 ### src/indexer.py

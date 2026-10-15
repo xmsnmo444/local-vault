@@ -32,31 +32,31 @@ def cmd_index(args: argparse.Namespace) -> int:
     t0 = time.time()
     indexed_files = 0
     indexed_chunks = 0
-    skipped = 0
+    skipped_uptodate = 0
+    skipped_error = 0
 
     try:
         with Store(cfg) as store:
             store.init_schema()
             store.check_model_consistency()
 
-            existing_now: set[str] = {
-                os.path.abspath(p) for p in iter_files(root, cfg)
-            }
+            # [P2-7] 单次遍历，结果复用，避免二次 walk 带来双倍 I/O
+            all_files = [os.path.abspath(p) for p in iter_files(root, cfg)]
+            existing_now: set[str] = set(all_files)
 
-            for path in iter_files(root, cfg):
-                path = os.path.abspath(path)
+            for path in all_files:
                 try:
                     st = os.stat(path)
                     text = read_text(path)
                 except OSError:
-                    skipped += 1
+                    skipped_error += 1
                     continue
 
                 chash = content_hash(text)
                 if not args.force and not store.needs_reindex(
                     path, st.st_mtime, chash
                 ):
-                    skipped += 1
+                    skipped_uptodate += 1
                     continue
 
                 chunks = []
@@ -90,7 +90,7 @@ def cmd_index(args: argparse.Namespace) -> int:
     dt = time.time() - t0
     print(
         f"完成：索引 {indexed_files} 个文件 / {indexed_chunks} 个 chunk，"
-        f"跳过 {skipped}，耗时 {dt:.2f}s"
+        f"未变 {skipped_uptodate}，失败 {skipped_error}，耗时 {dt:.2f}s"
     )
     print(f"数据库：{os.path.abspath(cfg.db_path)}")
     return 0
@@ -143,6 +143,17 @@ def cmd_stats(args: argparse.Namespace) -> int:
     return 0
 
 
+def _positive_int(value: str) -> int:
+    """[MINOR] 拒绝 <=0 的 -k / --rrf-k。"""
+    try:
+        ivalue = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"必须是整数：{value!r}")
+    if ivalue <= 0:
+        raise argparse.ArgumentTypeError(f"必须 > 0，收到 {ivalue}")
+    return ivalue
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="local-vault", description="本地优先的个人数据保险箱 + 语义检索"
@@ -157,8 +168,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     ps = sub.add_parser("search", help="语义 + 关键词混合检索")
     ps.add_argument("query", help="查询语句")
-    ps.add_argument("-k", type=int, default=10, help="返回条数（默认 10）")
-    ps.add_argument("--rrf-k", type=int, default=60, help="RRF 常数（默认 60）")
+    ps.add_argument(
+        "-k", type=_positive_int, default=10, help="返回条数（默认 10）"
+    )
+    ps.add_argument(
+        "--rrf-k", type=_positive_int, default=60, help="RRF 常数（默认 60）"
+    )
     ps.set_defaults(func=cmd_search)
 
     pt = sub.add_parser("stats", help="查看库统计")

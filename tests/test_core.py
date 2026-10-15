@@ -114,6 +114,51 @@ def test_model_consistency_mismatch(tmp_path):
             assert "不匹配" in str(exc) or "reindex" in str(exc)
 
 
+def test_model_name_change_triggers_reindex(tmp_path):
+    """[P0-1] 只改 model_name（backend 不变）也必须触发不匹配报错。"""
+    db = str(tmp_path / "v.db")
+    cfg = load_config(db_path=db, model_name="model-A", embed_backend="hash")
+    with Store(cfg) as store:
+        store.init_schema()
+        store.check_model_consistency()
+    cfg2 = load_config(db_path=db, model_name="model-B", embed_backend="hash")
+    with Store(cfg2) as store2:
+        store2.init_schema()
+        try:
+            store2.check_model_consistency()
+            raise AssertionError("改 model_name 竟未触发重建提示（meta 错位 bug 未修）")
+        except RuntimeError as exc:
+            assert "model_name" in str(exc)
+
+
+def test_legacy_db_missing_content_hash_column(tmp_path):
+    """[P1-5] 旧库无 content_hash 列时应自动补列，不抛错。"""
+    import sqlite3
+
+    db = str(tmp_path / "legacy.db")
+    conn = sqlite3.connect(db)
+    conn.executescript(
+        """
+        CREATE TABLE chunks (
+          chunk_id TEXT PRIMARY KEY, path TEXT NOT NULL, start INTEGER NOT NULL,
+          end INTEGER NOT NULL, text TEXT NOT NULL, mtime REAL NOT NULL,
+          vec BLOB NOT NULL
+        );
+        """
+    )
+    conn.execute(
+        "INSERT INTO chunks VALUES('old','p',0,1,'t',1.0,X'00000000')"
+    )
+    conn.commit()
+    conn.close()
+
+    cfg = load_config(db_path=db)
+    with Store(cfg) as store:
+        store.init_schema()          # 应迁移成功
+        store.check_model_consistency()
+        assert store.count() == 1    # 旧数据保留
+
+
 def test_search_returns_hits(tmp_path):
     cfg = load_config(db_path=str(tmp_path / "v.db"), chunk_size=64, chunk_overlap=8)
     with Store(cfg) as store:

@@ -11,9 +11,12 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
 
 from .config import Config
+
+if TYPE_CHECKING:
+    from .store import Chunk
 
 log = logging.getLogger("local_vault.indexer")
 
@@ -39,9 +42,7 @@ def iter_files(root: str, cfg: Config) -> Iterator[str]:
     root = os.path.abspath(root)
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         # 原地过滤子目录，避免深入无用目录
-        dirnames[:] = [
-            d for d in dirnames if d not in cfg.skip_dirs and not d.startswith("$")
-        ]
+        dirnames[:] = [d for d in dirnames if d not in cfg.skip_dirs]
 
         for name in filenames:
             ext = os.path.splitext(name)[1].lower()
@@ -117,10 +118,10 @@ def chunk_text(text: str, cfg: Config) -> list[tuple[int, int, str]]:
     return spans
 
 
-def iter_chunks(root: str, cfg: Config) -> Iterator["object"]:
+def iter_chunks(root: str, cfg: Config) -> "Iterator[Chunk]":
     """遍历并产出 Chunk 流。
 
-    延迟导入 Chunk 以避免与 store 的循环依赖。
+    Chunk 延迟导入以避免与 store 的循环依赖。
     """
     from .store import Chunk
 

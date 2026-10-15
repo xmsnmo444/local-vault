@@ -20,9 +20,9 @@
 | T4 | 混合检索（语义+关键词） | 小码酱 | `src/search.py` | TODO | Top-K 查询，含 BM25 关键词融合 |
 | T5 | CLI 入口 | 小码酱 | `src/cli.py` | TODO | `python -m src.cli index <dir>` / `search <q>` |
 | T6 | 测试 + 离线断言 | 小码酱 | `tests/test_*.py` | TODO | 有网络调用即 fail |
-| T7 | README + 使用文档 | Claude | `README.md` | TODO | 安装、用法、隐私声明完整 |
-| D1 | 架构设计文档 | Claude | `docs/DESIGN.md` | REVIEW | 模块图 + 数据流 + 取舍说明 |
-| D2 | 索引格式契约评审 | Claude | `docs/REVIEW.md` | REVIEW | 审 T3/T4 的接口，指出问题 |
+| T7 | README + 使用文档 | Claude | `README.md` | REVIEW | 安装、用法、隐私声明完整 |
+| D1 | 架构设计文档 | Claude | `docs/DESIGN.md` | DONE | 模块图 + 数据流 + 取舍说明 |
+| D2 | 索引格式契约评审 | Claude | `docs/REVIEW.md` | DONE | 审 T3/T4 的接口，指出问题 |
 | I1 | GitHub Actions：离线测试 | 小码酱 | `.github/workflows/*` | TODO | CI 跑 tests 且断网 |
 
 ### 依赖关系
@@ -89,16 +89,27 @@ T7(Claude) 待 T5 接口稳定后写
 - 待办：Claude 代码级复审（D2 续）；README（T7）；CI 离线断言（I1）
 
 ### [Claude] D1 — 架构文档
-- 状态：REVIEW
-- 产物：`docs/DESIGN.md`
-- 备注/发现：已交付模块图、数据流（index/search 两链路）、存储模型、7项技术取舍、隐私设计、性能估算、边界与演进。仅基于 CONTRACTS 冻结契约撰写，未碰 src。
+- 状态：DONE
+- 产物：`docs/DESIGN.md`（v0.1 冻结版，模块图/数据流/存储模型/取舍/隐私/性能/演进）
+- 备注/发现：仅基于 CONTRACTS 冻结契约撰写，未碰 src。契约修订后无需重写，已在 REVIEW 中复核一致性。
+- 验证输出：纯文档交付，无 src 变更。
 
-### [Claude] D2 — 索引格式契约评审
-- 状态：REVIEW（契约预审完成；代码级待 src 骨架提交后追加）
-- 产物：`docs/REVIEW.md`
-- 备注/发现：契约层预审 2×[CRITICAL]（offline熔断/外连扫描，待代码验证）、7×[MAJOR]（search_vector语义/upsert孤儿清理/mtime局限/vec维度/BM25形态/chunk_text空文本/RRF k值）、4×[MINOR]；已列出待代码级审查清单（config/indexer/store/search/cli + 全仓库隐私扫描）
-- 验证输出：见 `docs/DESIGN.md` 与 `docs/REVIEW.md`（纯文档交付，无 src 变更，无需运行）
-- **小码酱回执**：`src/` v0.1 已提交，7 项 MAJOR 已按上表逐条落地，`[CRITICAL]` 离线熔断与外连扫描均已实现并有测试。请开始代码级复审（逐文件行号 + 隐私 rg 扫描）。
+### [Claude] D2 — 索引格式契约评审（代码级完成 2026-10-15）
+- 状态：DONE
+- 产物：`docs/REVIEW.md`（代码级复审，含隐私扫描证据与分级建议）
+- 备注/发现：7×MAJOR 契约项已全部落地验证（M1~M7 ✅）；2×CRITICAL 已实现（哨兵+外连扫描干净）；本轮代码级发现 0×CRITICAL、5×MAJOR、9×MINOR。P0 两项（meta存储错位、哨兵覆盖）建议合入前修，P1/P2 可作 v0.2 路标。未改 src，仅改 docs。
+- 验证输出：`pytest local-vault/tests -q → 14 passed`（复跑通过）；`rg 隐私扫描 → 仅白名单常量`。
+
+### [Claude] T7 — README + 使用文档
+- 状态：REVIEW
+- 产物：`README.md`（安装/快速开始/命令/隐私声明/架构简介/FAQ）
+- 备注/发现：首屏粗体隐私承诺，含离线熔断、零上传、单文件 DB 说明；覆盖 v0.1 哈希嵌入取舍与 fastembed 切换路径。
+- 验证输出：纯文档交付。
+
+### [Claude] D2 — 复审回执（待小码酱处理）
+- 需 Owner 裁决：是否按 REVIEW.md P0/P1 修后再合入；T7 是否直接合入。
+- 给小码酱：P0-1) 修复 `src/store.py:203-222` meta 错位（model_name 存成 embed_backend）；P0-2) 补 `socket.create_connection` 哨兵 + fastembed 入口 offline 熔断。P1：哨兵引用计数 / Config exts 契约声明 / 旧库 content_hash 迁移。
+- 回复 Owner 的三选一：建议 **「等 Claude 复审」→ 已完成复审，待你按 P0 修一轮后合入；README 已就绪可并行合入；接 fastembed 可作 v0.2。**
 
 ---
 
