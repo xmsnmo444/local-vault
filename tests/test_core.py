@@ -282,4 +282,26 @@ def test_read_text_encoding_fallback(tmp_path):
         pass  # 预期行为
 
 
+def test_iter_files_skips_symlinks(tmp_path):
+    """[P4] iter_files 应跳过符号链接，避免环路和意外的外部访问。"""
+    import sys
+
+    cfg = load_config(db_path=":memory:")
+    real_file = tmp_path / "real.md"
+    real_file.write_text("real content", encoding="utf-8")
+
+    link_file = tmp_path / "link.md"
+    # Windows 符号链接需要管理员权限或开发者模式，跳过 Windows
+    if sys.platform == "win32":
+        import pytest
+        pytest.skip("Windows 符号链接需要特殊权限")
+    else:
+        link_file.symlink_to(real_file)
+
+    found = {Path(p).name for p in iter_files(str(tmp_path), cfg)}
+    assert "real.md" in found
+    assert "link.md" not in found, "符号链接应被跳过"
+
+
+
 

@@ -50,6 +50,12 @@ def iter_files(root: str, cfg: Config) -> Iterator[str]:
                 continue
 
             path = os.path.join(dirpath, name)
+
+            # 跳过符号链接，避免环路和意外的外部访问
+            if os.path.islink(path):
+                log.debug("跳过符号链接 %s", path)
+                continue
+
             try:
                 st = os.stat(path)
             except (PermissionError, OSError) as exc:
