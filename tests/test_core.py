@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -90,11 +91,15 @@ def test_needs_reindex_mtime_and_hash(tmp_path):
         store.init_schema()
         store.check_model_consistency()
         p = str(tmp_path / "d.md")
-        store.upsert_chunks([Chunk("x", p, 0, 5, "hello", 100.0, "hashA")])
-        assert store.needs_reindex(p, 100.0, "hashA") is False
-        assert store.needs_reindex(p, 200.0, "hashA") is True   # mtime 变
-        assert store.needs_reindex(p, 100.0, "hashB") is True   # 内容变
-        assert store.needs_reindex(str(tmp_path / "new.md"), 0.0) is True
+        store.upsert_chunks([Chunk("x", p, 0, 5, "hello", 100.0, "hashA", 5)])
+        # 相同 mtime, size, hash → 不需要重新索引
+        assert store.needs_reindex(p, 100.0, 5, "hashA") is False
+        # mtime 变但 hash 相同 → 不需要重新索引（增量优化）
+        assert store.needs_reindex(p, 200.0, 5, "hashA") is False
+        # 内容变 → 需要重新索引
+        assert store.needs_reindex(p, 100.0, 5, "hashB") is True
+        # 新文件 → 需要索引
+        assert store.needs_reindex(str(tmp_path / "new.md"), 0.0, 0) is True
 
 
 def test_model_consistency_mismatch(tmp_path):
@@ -357,6 +362,43 @@ def test_semantic_threshold_filters_low_scores(tmp_path):
         # 由于 hybrid 融合，keyword 路仍可能返回结果
         # 测试只验证阈值不会导致崩溃，实际过滤效果取决于嵌入质量
         assert isinstance(hits_strict, list)
+
+
+def test_incremental_index_mtime_only_update(tmp_path):
+    """[P7] mtime 变化但内容未变时，只更新 mtime，不重新嵌入。"""
+    cfg = load_config(db_path=str(tmp_path / "v.db"))
+    file_path = str(tmp_path / "note.txt")
+
+    # 初次索引
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write("initial content")
+    st1 = os.stat(file_path)
+    hash1 = content_hash("initial content")
+
+    with Store(cfg) as store:
+        store.init_schema()
+        store.upsert_chunks([Chunk("c1", file_path, 0, 15, "initial content", st1.st_mtime, hash1, st1.st_size)])
+
+        # 触碰文件（mtime 变化，内容不变）
+        import time as time_mod
+        time_mod.sleep(0.01)
+        os.utime(file_path, None)
+        st2 = os.stat(file_path)
+        assert st2.st_mtime != st1.st_mtime
+
+        # needs_reindex 应返回 False（因为 hash 相同）
+        assert not store.needs_reindex(file_path, st2.st_mtime, st2.st_size, hash1)
+
+        # update_mtime_only 更新 mtime
+        store.update_mtime_only(file_path, st2.st_mtime)
+        store.commit()
+
+        # 验证 mtime 已更新
+        row = store.conn.execute(
+            "SELECT mtime FROM chunks WHERE chunk_id=?", ("c1",)
+        ).fetchone()
+        assert row[0] == st2.st_mtime
+
 
 
 

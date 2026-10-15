@@ -40,6 +40,7 @@ class Chunk:
     text: str
     mtime: float
     content_hash: str
+    size: int = 0  # 文件大小（字节），用于增量索引优化
 
 
 # --------------------------------------------------------------------------
@@ -221,6 +222,12 @@ class Store:
                 "ALTER TABLE chunks ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''"
             )
             log.info("已迁移：chunks.content_hash 列已补上（旧库升级）")
+        if "size" not in cols:
+            cur.execute(
+                "ALTER TABLE chunks ADD COLUMN size INTEGER"
+            )
+            log.info("已迁移：chunks.size 列已补上（旧库升级）")
+
 
     def _meta_get(self, key: str) -> str | None:
         row = self.conn.execute("SELECT value FROM meta WHERE key=?", (key,)).fetchone()
@@ -357,6 +364,7 @@ class Store:
                     c.text,
                     c.mtime,
                     c.content_hash,
+                    c.size,
                     _pack(vec),
                 )
             )
@@ -370,8 +378,8 @@ class Store:
 
             cur.executemany(
                 "INSERT OR REPLACE INTO chunks"
-                "(chunk_id, path, start, end, text, mtime, content_hash, vec) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(chunk_id, path, start, end, text, mtime, content_hash, size, vec) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
             self.conn.commit()
@@ -411,20 +419,54 @@ class Store:
 
     # ---------- 读取 ----------
     def needs_reindex(
-        self, path: str, mtime: float, content_hash: str | None = None
+        self,
+        path: str,
+        mtime: float,
+        size: int,
+        content_hash: str | None = None,
     ) -> bool:
-        """[M3] mtime 为主，content_hash 为二次校验。"""
+        """[M3] mtime/size 为主，content_hash 为二次校验。
+
+        流程：
+        1. 检查文件是否在库中
+        2. 比较 mtime，变化则检查 content_hash
+        3. mtime 未变但提供了 size，检查 size 是否一致
+        4. 都通过则不需要重新索引
+        """
         row = self.conn.execute(
-            "SELECT mtime, content_hash FROM chunks WHERE path=? LIMIT 1", (path,)
+            "SELECT mtime, content_hash, size FROM chunks WHERE path=? LIMIT 1",
+            (path,),
         ).fetchone()
         if row is None:
             return True
-        stored_mtime, stored_hash = row
+
+        stored_mtime, stored_hash, stored_size = row
+
+        # mtime 变化，需要进一步检查
         if abs(stored_mtime - mtime) > 1e-6:
+            # 如果提供了 content_hash，用它判断
+            if content_hash is not None and stored_hash and stored_hash == content_hash:
+                # 内容未变，只需更新 mtime（由调用方决定）
+                return False
+            # mtime 变了但没有 hash 对比，保守认为需要重建
             return True
+
+        # mtime 未变，检查 size（如果提供）
+        if size >= 0 and stored_size is not None and stored_size != size:
+            return True
+
+        # 如果提供了 content_hash 做最终校验
         if content_hash is not None and stored_hash and stored_hash != content_hash:
             return True
+
         return False
+
+    def update_mtime_only(self, path: str, new_mtime: float) -> None:
+        """[M3] mtime 变化但内容未变时，仅更新 mtime 而不重新嵌入。"""
+        self.conn.execute(
+            "UPDATE chunks SET mtime=? WHERE path=?",
+            (new_mtime, path),
+        )
 
     def all_chunks(self) -> Iterator[Chunk]:
         for row in self.conn.execute(

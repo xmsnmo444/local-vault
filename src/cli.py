@@ -58,9 +58,18 @@ def cmd_index(args: argparse.Namespace) -> int:
                     continue
 
                 chash = content_hash(text)
+
+                # [P7] 增量优化：先比较 mtime 和 size，再看 hash
                 if not args.force and not store.needs_reindex(
-                    path, st.st_mtime, chash
+                    path, st.st_mtime, st.st_size, chash
                 ):
+                    # mtime 变化但 hash 相同时，只更新 mtime
+                    row = store.conn.execute(
+                        "SELECT mtime FROM chunks WHERE path=? LIMIT 1", (path,)
+                    ).fetchone()
+                    if row and abs(row[0] - st.st_mtime) > 1e-6:
+                        store.update_mtime_only(path, st.st_mtime)
+
                     skipped_uptodate += 1
                     continue
 
@@ -78,6 +87,7 @@ def cmd_index(args: argparse.Namespace) -> int:
                             text=piece,
                             mtime=st.st_mtime,
                             content_hash=chash,
+                            size=st.st_size,
                         )
                     )
                 if chunks:
