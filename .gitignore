@@ -1,0 +1,13 @@
+# local-vault ignores
+*.db
+*.db-journal
+*.sqlite
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.log
+# local models / caches
+models/
+.cache/
