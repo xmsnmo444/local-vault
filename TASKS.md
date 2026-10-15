@@ -88,28 +88,30 @@ T7(Claude) 待 T5 接口稳定后写
   - 语义路当前为哈希嵌入，正例召回靠关键词路兜底，属 v0.1 预期；接真模型后语义质量提升。
 - 待办：Claude 代码级复审（D2 续）；README（T7）；CI 离线断言（I1）
 
-### [Claude] D1 — 架构文档
+### [Claude] D1 — 架构文档（rev.2 已同步 P0/P1 修复 2026-10-15）
 - 状态：DONE
-- 产物：`docs/DESIGN.md`（v0.1 冻结版，模块图/数据流/存储模型/取舍/隐私/性能/演进）
-- 备注/发现：仅基于 CONTRACTS 冻结契约撰写，未碰 src。契约修订后无需重写，已在 REVIEW 中复核一致性。
-- 验证输出：纯文档交付，无 src 变更。
+- 产物：`docs/DESIGN.md`（rev.2）
+- 备注/发现：已同步 17 种扩展名、skip_dirs、meta 三键、content_hash 迁移、哨兵引用计数、CLI 单遍历等 P0/P1/P2 变更；与 CONTRACTS 修订版一致。未碰 src。
+- 验证输出：纯文档交付。
 
-### [Claude] D2 — 索引格式契约评审（代码级完成 2026-10-15）
+### [Claude] D2 — 索引格式契约评审（代码级 + 复核完成 2026-10-15）
 - 状态：DONE
-- 产物：`docs/REVIEW.md`（代码级复审，含隐私扫描证据与分级建议）
-- 备注/发现：7×MAJOR 契约项已全部落地验证（M1~M7 ✅）；2×CRITICAL 已实现（哨兵+外连扫描干净）；本轮代码级发现 0×CRITICAL、5×MAJOR、9×MINOR。P0 两项（meta存储错位、哨兵覆盖）建议合入前修，P1/P2 可作 v0.2 路标。未改 src，仅改 docs。
-- 验证输出：`pytest local-vault/tests -q → 14 passed`（复跑通过）；`rg 隐私扫描 → 仅白名单常量`。
+- 产物：`docs/REVIEW.md`（复核版，33c9460）
+- 备注/发现：初审 5×MAJOR+9×MINOR 已全部修复；复核 rg 零命中、pytest 19 passed。复核通过，建议合入。未改 src，仅改 docs。
+- 验证输出：`pytest local-vault/tests -q → 19 passed in 0.25s`（复核）；`rg 隐私扫描 → 零命中`。
 
 ### [Claude] T7 — README + 使用文档
-- 状态：REVIEW
+- 状态：REVIEW（已就绪，待合入）
 - 产物：`README.md`（安装/快速开始/命令/隐私声明/架构简介/FAQ）
 - 备注/发现：首屏粗体隐私承诺，含离线熔断、零上传、单文件 DB 说明；覆盖 v0.1 哈希嵌入取舍与 fastembed 切换路径。
 - 验证输出：纯文档交付。
 
-### [Claude] D2 — 复审回执（待小码酱处理）
-- 需 Owner 裁决：是否按 REVIEW.md P0/P1 修后再合入；T7 是否直接合入。
-- 给小码酱：P0-1) 修复 `src/store.py:203-222` meta 错位（model_name 存成 embed_backend）；P0-2) 补 `socket.create_connection` 哨兵 + fastembed 入口 offline 熔断。P1：哨兵引用计数 / Config exts 契约声明 / 旧库 content_hash 迁移。
-- 回复 Owner 的三选一：建议 **「等 Claude 复审」→ 已完成复审，待你按 P0 修一轮后合入；README 已就绪可并行合入；接 fastembed 可作 v0.2。**
+### [Claude] 复核结论 — 建议合入 ✅（2026-10-15）
+- 状态：复核通过
+- 产物：`docs/DESIGN.md` rev.2（已同步 exts 17 种等）、`docs/REVIEW.md` 复核版
+- 备注/发现：P0 真 bug（meta 错位/create_connection 后门/fastembed 熔断）已堵死；P1/P2 已顺手清零。质量超出预期，边界"不碰对方文件"遵守到位。
+- 给 Owner：**「合入」** — 可直接合入打 v0.1 tag；`fastembed` 真模型放 v0.2；I1（CI 离线测试）可作为 v0.1 后首项。
+- 验证输出：`pytest 19 passed` + `rg 零命中`（见 REVIEW.md §4）
 
 ### [小码酱] 代码复审修复（P0/P1/P2）— 待 Claude 复核
 - 状态：DONE（commit 33c9460）
