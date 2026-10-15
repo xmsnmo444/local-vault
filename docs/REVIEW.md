@@ -19,15 +19,15 @@
 
 ### 已修复 — 确认通过
 
-* `[CRITICAL] src/store.py:156-159 — offline 熔断已实现 — Store.__init__ 首行 assert_offline()，替换 socket.socket.connect / socket.getaddrinfo 抛 OfflineViolation，close() 时卸载。tests/test_offline.py 4 项覆盖（connect/DNS/卸载/可关闭）。符合 CONTRACTS 隐私自检。`
-* `[CRITICAL] src/**/*.py — 全仓外连扫描 — 初审仅命中 src/store.py:51 的 _NETWORK_MODULE_NAMES 白名单常量，复核已删该常量，零命中。无 requests.post / urllib.request / socket.create_connection 主动调用。干净。`
+* `[CRITICAL] src/store.py:156-159 — offline 熔断已实现 — Store.__init__ 首行 assert_offline()，替换 socket.socket.connect / socket.getaddrinfo / create_connection 抛 OfflineViolation，close() 时引用计数归零才卸载。tests/test_offline.py 6 项覆盖（connect/create_connection/DNS/引用计数/卸载/可关闭）。符合 CONTRACTS 隐私自检。`
+* `[CRITICAL] src/**/*.py — 全仓外连扫描 — 初审仅命中白名单常量，复核零命中。无 requests.post / urllib.request 主动调用。干净。`
 
-### 复核：P0/P1 已全部修复 ✅
+### 复核：P0/P1 已全部修复 ✅（v0.2 语义修正已确认）
 
-* `[MAJOR] src/store.py:51-77 — 哨兵未覆盖所有网络面 — ✅ 已修复（33c9460）：已追加 socket.create_connection 哨兵 + _embed_fastembed 入口 if cfg.offline 熔断；复核 rg 零命中，测试 test_offline_blocks_create_connection + test_embed_fastembed_blocked_when_offline 通过。`
+* `[MAJOR] src/store.py:51-77 — 哨兵未覆盖所有网络面 — ✅ 已修复（33c9460 + 33b3f84 修正）：已追加 socket.create_connection 哨兵；`_embed_fastembed` 的语义已从「offline 即熔断」修正为「offline 允许离线加载，只禁联网下载」（检查 cache_dir + HF_HUB_OFFLINE=1 强制离线），测试 test_fastembed_missing_weights_raises_not_silent_fallback 通过。`
 * `[MAJOR] src/store.py:80-88 / 408-414 — 全局哨兵的引用计数缺失 — ✅ 已修复：新增 _offline_refcount，assert_offline 递增、uninstall_offline(force=False) 递减归零才卸载，force=True 供测试 autouse 强制清理；测试 test_offline_refcount_multi_store 通过。`
 * `[MINOR] src/store.py:51 — _NETWORK_MODULE_NAMES 未被使用 — ✅ 已修复：已删除该死代码（P2-8）。`
-* `[MINOR] src/store.py:237-250 — fastembed 首次加载未显式禁止联网 — ✅ 已修复：_embed_fastembed 入口 offline 熔断 + 检查 ~/.cache/fastembed 目录，缺失抛 RuntimeError，不再静默联网。`
+* `[MINOR] src/store.py:237-250 — fastembed 首次加载未显式禁止联网 — ✅ 已修复：_embed_fastembed 检查 resolved_cache_dir，缺失报 RuntimeError 提示 fetch-model，加载时强制 HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1，不再静默联网。`
 
 ---
 
@@ -102,18 +102,20 @@
 
 ---
 
-## 5. 复核结论 — 建议合入 ✅
+## 5. 复核结论 — 建议合入 ✅（v0.2 更新：仍通过）
 
 **P0 两项已修（真 bug 已堵）**
 
 1. ✅ `meta` 三键分开存储，`model_name` 单改可触发重建（回归测试已卡死）。
-2. ✅ `create_connection` 已拦截 + `fastembed` 入口熔断。
+2. ✅ `create_connection` 已拦截 + `fastembed` 离线加载语义已修正（见下）。
 
 **P1/P2 已全部顺手修完（超出预期）**
 
 3. ✅ 引用计数；4. ✅ 契约声明；5. ✅ 旧库迁移；6. ✅ 分词合并；7. ✅ CLI 单遍历+计数拆分+校验；8. ✅ 死代码删除。
 
-**无新增阻塞项，建议直接合入打 v0.1 tag。**
+**v0.2 增补**：契约语义「offline 允许离线加载，只禁联网下载」已确认正确；CI 3 个 bug 已修；`.venv` 隔离已落地。
+
+**无新增阻塞项，建议随 v0.2 合入。**
 
 ---
 
@@ -140,3 +142,21 @@
 * 产物：`docs/DESIGN.md` 已同步 rev.2（exts 17 种、meta 三键、哨兵覆盖、迁移、CLI 优化）；本文件全量更新为"已修复"状态；`T7 README` 已就绪
 * 验证：`pytest → 19 passed`，`rg 隐私扫描 → 零命中`
 * 结论：P0/P1/P2 全部修复，复核通过，建议合入
+
+### 2026-10-15 — v0.2 CI 设计评审 V2-3（commit 33b3f84，隔离 .venv 复核）
+
+* 产物：`.github/workflows/ci.yml` 重写版（双 job：test 断网 + privacy 扫描）
+* 验证：`.venv\Scripts\python -m pytest tests -q → 24 passed in 1.17s`（宿主直接跑会因 onnxruntime 1.31.0 segfault，必须走 .venv）
+* 初版 3 个 bug 已修（确认小码酱修复正确）：
+  1. ✅ `ripgrep` 未安装：已加 `sudo apt-get install -y ripgrep`（privacy job）。
+  2. ✅ 测试路径 `local-vault/tests`：已改为 `tests`（仓库根即项目根）。
+  3. ✅ `grep -v "_NETWORK"` 死代码：已移除（该常量 v0.1 已删，P2-8）。
+* 新增正确性确认：
+  * `privacy` job：`rg -n "requests\.post|urllib\.request|http\.client|httpx\.|telemetry|sentry|posthog"` 仅扫 `src/`，并排除哨兵实现行（`guarded_*`），命中即 fail；另加 `hf_hub_download|snapshot_download` 断言 `fetch-model` 为唯一联网入口 — 正确。
+  * `test` job：`unshare -rn` 断网执行 `pytest`，含降级警告分支；另加 `OfflineViolation` 对 `create_connection` 的显式断言 — 正确。
+  * `requirements`：`pip install pytest fastembed` 让真模型用例在 CI 走 `skip` 而非硬失败（`test_semantic.py` 模块级 `skipif`）— 正确，不依赖网络。
+* 契约语义修正确认：
+  * v0.1 的「offline 即熔断 fastembed」→ v0.2 的「offline 允许离线加载，只禁联网下载」**正确**。`src/store.py:304-340` 已改为检查 `cache_dir` 存在 + `HF_HUB_OFFLINE=1` 强制离线加载，缺失则提示 `fetch-model`，绝不静默降级；测试 `test_fastembed_missing_weights_raises_not_silent_fallback` / `test_fastembed_offline_load_when_weights_present` 已覆盖。
+  * `CONTRACTS.md` / `config.py` 的 `resolve_embed_dim()` / `model_cache_dir` / `resolved_cache_dir` 已在本轮补声明（见 `CONTRACTS.md` v0.2 增补）。
+* 编码与发布物料：`requirements.txt`（v0.1 零依赖）/`requirements-v0.2.txt`（UTF-8 已修复）/`LICENSE`（MIT）/`docs/RELEASE-v0.2.md` 已就绪；`demo/*.txt` 的 UTF-8 BOM 已去除。
+* 结论：CI 设计无阻塞漏洞，**复核通过，建议随 v0.2 合入**。

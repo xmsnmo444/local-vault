@@ -287,17 +287,59 @@ V2-8(可选，独立)
   - `requirements-v0.2.txt` 原为 UTF-16 编码（pip 无法解析），已转 UTF-8。
   - 待办：Claude 复核 V2-3（CI 行号级评审）；契约须补 `resolve_embed_dim()` / `model_cache_dir` 声明。
 
-### [Claude] v0.2 — V2-1/V2-2 已交付，V2-3 评审中
-- 状态：REVIEW
-- 产物：`docs/CONTRACTS.md`（v0.2 权重两阶段 + 512 维 + 独立 .venv 约定）、`docs/DESIGN.md`（v0.2 架构 §8-§10）、`.github/workflows/ci.yml`（双 job：test 断网 + privacy 扫描）
-- 备注/发现：契约已更正 embed_dim 512（实测）并明确 fetch-model 为唯一联网入口；设计已补隔离环境与两阶段流程；CI 已挂载待小码酱接入。按 AGENTS.md 边界，仅改 docs/ 与 .github/workflows，不碰 src/。
-- 验证输出：纯文档/CI 交付；`D:\逆向\local-vault\.venv` 已建（onnxruntime 1.18.1 + fastembed 0.9.0，host 2.5.4/1.31.0 未动），huggingface 权重下载因网络抖动待重试（离线 0.1s 机制已约定）。
+### [小码酱] v0.2 定版 + 发布物料
+- 状态：DONE（tag `v0.2` 待打，基于 commit 33b3f84；待 Claude 完成 README 后定版）
+- 改动：`LICENSE`（新增，MIT）、`requirements.txt`（新增，基础依赖）、`docs/RELEASE-v0.2.md`（新增，发布说明）
+- **Owner 决策**：许可证 = **MIT**；**暂不发布**，先继续完善。
+- 验收补充：
+  ```
+  $ .venv\Scripts\python -m src.cli fetch-model
+  完成：权重就绪，向量维度 512，耗时 0.1s        # 权重已存在时幂等
 
-### [Claude] V2-3 — CI 设计评审（初审）
+  # 冷启动端到端（fastembed）
+  index demo --backend fastembed  → 4 文件 / 4 chunk，0.72s
+  search "怎么炖肉比较好吃"        → [hybrid] cook.txt ✅（同义改写命中）
+  search "反作弊怎么绕过"          → [hybrid] games.md ✅
+  # 响应 0.64s，满足 <2s 验收
+  ```
+- **纠正 Claude 体检报告的两处误差**：
+  1. `demo/` 已被 `.gitignore` 忽略，**从未被跟踪**，`git status` 为空——不存在"待提交的 4 个 demo 文件"。该目录是本地演练用，不入库是正确的。
+  2. `requirements-v0.2.txt` 早在 `33b3f84` 已提交，无需重复 add。
+  - 已复验：所有**已跟踪**文件均无 BOM、全 UTF-8，仓库编码干净。
+- 待办（交 Claude）：
+  - **README 更新**（v0.2 已过时，见下方派活）
+  - 契约补 `resolve_embed_dim()` / `model_cache_dir` 声明
+  - V2-3 CI 行号级评审
+
+### [小码酱] README 过时点清单（供 Claude 更新 README 用）
+
+`README.md` 目前停留在 v0.1，以下必须改：
+
+| 位置 | 现状（过时） | 应改为（v0.2） |
+|---|---|---|
+| 安装段 | 只说"零重依赖，可选 pip install fastembed" | 分两条路径：hash（零依赖）/ fastembed（`pip install -r requirements-v0.2.txt` + 独立 `.venv`） |
+| 命令段 | 无 `fetch-model` | 补 `fetch-model`（标注"唯一联网命令"） |
+| 命令段 | `index`/`search` 无 `--backend` | 补 `--backend {hash,fastembed}` / `--model` |
+| FAQ「如何验证离线」 | "14 项测试" | "24 项测试" |
+| FAQ「v0.1 为什么语义一般」 | 描述为待办 | 改为 v0.2 已解决，附实测对比（0.62 vs 0.03） |
+| 开发段 | `pytest local-vault/tests -q` → 14 passed | 路径应为 `tests`；数字改 24 |
+| 开发段 | 无 CI 说明 | 补：CI 双 job（断网 pytest + 隐私扫描） |
+| 首屏 | — | 补一句 v0.2 真模型卖点 + 独立 venv 原因（onnxruntime 冲突） |
+| 许可证 | 无 | 补 MIT |
+
+> 可直接复用 `docs/RELEASE-v0.2.md` 的措辞（那是我刚写的发布说明，内容已成稿）。
+
+### [Claude] v0.2 — V2-1/V2-2 已交付
+- 状态：DONE
+- 产物：`docs/CONTRACTS.md`（v0.2 权重两阶段 + 512 维 + 独立 .venv 约定）、`docs/DESIGN.md`（v0.2 架构 §8-§10）
+- 备注/发现：契约已更正 embed_dim 512（实测）并明确 fetch-model 为唯一联网入口；设计已补隔离环境与两阶段流程。按 AGENTS.md 边界，仅改 docs/，不碰 src/。
+- 验证输出：纯文档交付；`D:\逆向\local-vault\.venv` 已建（onnxruntime 1.18.1 + fastembed 0.9.0，host 2.5.4/1.31.0 未动），huggingface 权重下载因网络抖动待重试（离线 0.1s 机制已约定）。
+
+### [Claude] V2-3 — CI 设计评审（待补）
 - 状态：REVIEW
-- 产物：`docs/REVIEW.md`（待补 ci.yml 漏洞段落，小码酱提 ci.yml 后追加）
-- 备注/发现：ci.yml 初版已交付（test + privacy 双 job），按你“你先写我再审”的节奏，待你提交 V2-7 后我做行号级评审。
-- 验证输出：见 `.github/workflows/ci.yml`（仅 docs/.github，不碰 src）
+- 产物：`docs/REVIEW.md`（待补 ci.yml 行号级评审，小码酱提 ci.yml 后追加）
+- 备注/发现：ci.yml 初版骨架已交付（test + privacy 双 job），按"你先写我再审"的节奏，待你提交 V2-7 后做行号级评审。
+- 验证输出：见 `.github/workflows/ci.yml`
 
 ---
 ## 给 Claude 的 v0.2 任务请求（Owner 可直接转发）

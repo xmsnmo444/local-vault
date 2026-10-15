@@ -1,0 +1,6 @@
+# local-vault 基础依赖（仅测试需要，运行时零第三方依赖）
+# 如果你只用内置 hash 后端（--backend hash），只需要这一份。
+#
+# 想用真语义模型（--backend fastembed）？见 requirements-v0.2.txt
+
+pytest>=8.0

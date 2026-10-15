@@ -75,13 +75,26 @@ def load_config(**overrides) -> Config: ...
 - 项目自带 `local-vault/.venv`（Python 3.12），锁定 `onnxruntime==1.18.1`、`numpy==1.26.4`、`fastembed==0.9.0`，清单 `requirements-v0.2.txt`（`pip freeze`）。
 - `.venv/` 已在 `.gitignore`，不入仓；CI 与本地均以 `.venv` 为准。
 
-**Config 维度修正**
+**Config 维度修正与新增字段**
 
-- `embed_dim` 含义不变，但默认值与校验按后端分支：
-  - `embed_backend="hash"` → `embed_dim=256`（v0.1 现状不变）。
-  - `embed_backend="fastembed"` + `model_name="BAAI/bge-small-zh-v1.5"` → `embed_dim=512`（实测）。
+```python
+@dataclass
+class Config:
+    # ...（v0.1 字段不变）
+    embed_dim: int = 0  # 0 = 按后端自动推断（见 resolve_embed_dim），>0 则显式覆盖
+    model_cache_dir: str = ""  # "" = 默认 ~/.cache/local-vault/models
 
-  `Store.check_model_consistency()` 已按三键比对，维度不匹配抛 `RuntimeError` 提示删库重建（沿用 M4）。
+    def resolve_embed_dim(self) -> int: ...
+        # hash → 256；fastembed → 按 model_name 查表（bge-small-zh 实测 512，未知模型回退 512）
+
+    @property
+    def resolved_cache_dir(self) -> str: ...  # model_cache_dir or DEFAULT_MODEL_CACHE
+```
+
+- `embed_dim` 默认 `0`，`resolve_embed_dim()` 按后端推断：`hash→256`，`fastembed("BAAI/bge-small-zh-v1.5")→512`。
+- `model_cache_dir` / `resolved_cache_dir` / `DEFAULT_MODEL_CACHE` 统一权重路径。
+
+  `Store.check_model_consistency()` 已按三键比对 `vec_dim/resolve_embed_dim()`，维度不匹配抛 `RuntimeError` 提示删库重建（沿用 M4）。
 
 **唯一联网入口：`fetch-model`**
 
@@ -89,21 +102,23 @@ def load_config(**overrides) -> Config: ...
 # CLI 新增（唯一允许联网的子命令）
 #   python -m src.cli fetch-model [--model BAAI/bge-small-zh-v1.5] [--cache-dir ~/.cache/local-vault/models]
 # 约定：
-# - index / search / stats 全程必须 offline=True，任何隐式联网抛 OfflineViolation。
+# - index / search / stats 全程必须 offline=True，任何隐式联网抛 OfflineViolation（但 fastembed 的离线加载例外，见下）。
 # - fetch-model 显式联网下载一次，写入 cache_dir（默认 ~/.cache/local-vault/models，不用 fastembed 默认路径，避免与其他工具混淆）。
-# - 之后所有 Store 加载走 HF_HUB_OFFLINE=1 强制离线（实测 0.1s），权重缺失 + offline=True → 明确报错并提示 fetch-model，禁止静默降级到 hash。
+# - 之后所有 Store 加载走 HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1 强制离线（实测 0.1s），权重缺失 + offline=True → 明确报错并提示 fetch-model，禁止静默降级到 hash。
 def cmd_fetch_model(args: argparse.Namespace) -> int: ...
 ```
 
-**两阶段语义（契约级）**
+**两阶段语义（契约级，v0.2 修正）**
+
+> 修正：v0.1 的「offline 即熔断 fastembed」是错的。**offline 允许离线加载本地权重，只禁止联网下载。**
 
 1. 阶段一（联网）：`fetch-model` 一次性下载。
-2. 阶段二（离线）：`Store._embed_fastembed` 仅从 `cache_dir` 离线加载；`cfg.offline=True` 时入口直接熔断 + 检查 `cache_dir` 是否存在，缺失抛错。
+2. 阶段二（离线）：`Store._embed_fastembed` 仅从 `cache_dir` 离线加载；`offline=True` 时**不熔断** `fastembed` 本身，改为检查 `cache_dir` 是否存在且非空 → 强制 `HF_HUB_OFFLINE=1` 加载，缺失则明确报错并提示 `fetch-model`，绝不静默降级到 hash（见 `test_fastembed_missing_weights_raises_not_silent_fallback`）。
 
 **不变量**
 
-- `index`/`search` 永远离线；`fetch-model` 是唯一例外，CI 中 `fetch-model` 不应被调用。
-- 维度与权重一一绑定：换 `model_name` 即换 `embed_dim`，旧库向量静默错乱已被 `test_model_name_change_triggers_reindex` 卡死。
+- `index`/`search` 永远离线（受 `offline` 哨兵约束，但 `fastembed` 离线加载是例外）；`fetch-model` 是唯一联网例外，CI 中 `fetch-model` 不应被调用。
+- 维度与权重一一绑定：换 `model_name` 即换 `resolve_embed_dim()`，旧库向量静默错乱已被 `test_model_name_change_triggers_reindex` 卡死。
 ```
 
 ### src/indexer.py
