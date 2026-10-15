@@ -58,6 +58,9 @@ def search(
     k = rrf_k if rrf_k is not None else cfg.rrf_k
     fanout = max(top_k * _FANOUT, top_k)
 
+    # 检查模型一致性，避免维度不匹配导致静默失败
+    store.check_model_consistency()
+
     # 语义路
     qvec = embed_query(q, cfg, store)
     sem_pairs = store.search_vector(qvec, fanout)

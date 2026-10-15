@@ -153,8 +153,13 @@ def _unpack(blob: bytes) -> list[float]:
 
 def _cosine(a: list[float], b: list[float]) -> float:
     """两向量余弦相似度；调用方保证已归一化时等价于点积。"""
-    if not a or not b or len(a) != len(b):
+    if not a or not b:
         return 0.0
+    if len(a) != len(b):
+        raise ValueError(
+            f"向量维度不匹配：查询向量 {len(a)} 维，库内向量 {len(b)} 维。"
+            "可能索引时使用了不同的模型或维度配置，请删库重建索引。"
+        )
     dot = 0.0
     na = 0.0
     nb = 0.0

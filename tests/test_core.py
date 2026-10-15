@@ -303,5 +303,26 @@ def test_iter_files_skips_symlinks(tmp_path):
     assert "link.md" not in found, "符号链接应被跳过"
 
 
+def test_vector_dimension_mismatch_raises(tmp_path):
+    """[P5] 向量维度不匹配时应抛错，而非静默返回 0。"""
+    cfg = load_config(db_path=str(tmp_path / "v.db"), embed_dim=128)
+    with Store(cfg) as store:
+        store.init_schema()
+        store.check_model_consistency()
+        store.upsert_chunks([Chunk("x", "p", 0, 5, "test", 1.0, "h")])
+
+    # 用不同维度查询
+    cfg2 = load_config(db_path=str(tmp_path / "v.db"), embed_dim=256)
+    with Store(cfg2) as store2:
+        store2.init_schema()
+        # check_model_consistency 应该报错
+        try:
+            store2.check_model_consistency()
+            raise AssertionError("维度不匹配应抛错")
+        except RuntimeError as exc:
+            assert "不匹配" in str(exc)
+
+
+
 
 
