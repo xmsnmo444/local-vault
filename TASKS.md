@@ -111,6 +111,39 @@ T7(Claude) 待 T5 接口稳定后写
 - 给小码酱：P0-1) 修复 `src/store.py:203-222` meta 错位（model_name 存成 embed_backend）；P0-2) 补 `socket.create_connection` 哨兵 + fastembed 入口 offline 熔断。P1：哨兵引用计数 / Config exts 契约声明 / 旧库 content_hash 迁移。
 - 回复 Owner 的三选一：建议 **「等 Claude 复审」→ 已完成复审，待你按 P0 修一轮后合入；README 已就绪可并行合入；接 fastembed 可作 v0.2。**
 
+### [小码酱] 代码复审修复（P0/P1/P2）— 待 Claude 复核
+- 状态：DONE（commit 33c9460）
+- 改动：`src/store.py`、`src/cli.py`、`src/indexer.py`、`tests/*`、`docs/CONTRACTS.md`（未碰 `docs/DESIGN.md`）
+- **P0 修复**
+  1. **meta 错位**：`check_model_consistency` 改为三键 `vec_dim`/`embed_backend`/`model_name` 逐键比对；旧库缺键自动补齐。→ 新增测试 `test_model_name_change_triggers_reindex`
+  2. **哨兵补全**：新增 `socket.create_connection` 拦截；`_embed_fastembed` 入口加 `if cfg.offline: raise OfflineViolation`，加载前检查本地缓存目录。→ 新增测试 `test_offline_blocks_create_connection` / `test_embed_fastembed_blocked_when_offline`
+- **P1 修复**
+  3. 哨兵**引用计数** `_offline_refcount`：多 Store 并存归零才卸载；`uninstall_offline(force=True)` 供测试隔离。→ 新增测试 `test_offline_refcount_multi_store`
+  4. 契约补齐：`exts` 17 种 + `skip_dirs` 已在 `docs/CONTRACTS.md` 声明（[P1-4] 段）
+  5. 旧库迁移：`init_schema` 加 `_migrate()`，`PRAGMA table_info` 检列缺失则 `ALTER TABLE ADD COLUMN`。→ 新增测试 `test_legacy_db_missing_content_hash_column`
+- **P2 修复**
+  6. 分词合并：`_tokens_for_embed` 复用 `_bm25_tokens`
+  7. CLI 单次遍历；`skipped` 拆为 `未变`/`失败`；`-k`/`--rrf-k` 用 `_positive_int` 拒绝 <=0
+  8. 删除死代码 `_NETWORK_MODULE_NAMES`；`$` 前缀目录过滤移除（改显式 `skip_dirs`）
+- 验证输出：
+  ```
+  $ pytest tests -q
+  19 passed in 0.27s        # 从 14 增至 19，新增 6 项覆盖 P0/P1
+
+  $ python -m src.cli --db vault.db index demo      # 全新
+  完成：索引 4 个文件 / 6 个 chunk，未变 0，失败 0，耗时 0.03s
+  $ python -m src.cli --db vault.db index demo      # 增量
+  完成：索引 0 个文件 / 0 个 chunk，未变 4，失败 0，耗时 0.01s
+  $ python -m src.cli --db vault.db search "逆向" -k 2
+  1. [hybrid] demo/re.md:0-52
+  $ python -m src.cli --db vault.db search "x" -k 0
+  error: argument -k: 必须 > 0，收到 0      # exit=2
+
+  # 隐私扫描（rg）→ 零命中（死代码常量表已移除，比上轮更干净）
+  ```
+- 待办：Claude 复核 P0/P1；请 Claude 同步 `docs/DESIGN.md` 中 exts 数量（7→17）
+- 备注：`docs/DESIGN.md` 归 Claude（单一归属），我未改。复核通过后请 Owner 合入；`fastembed` 真模型接线放 v0.2。
+
 ---
 
 ## 给 Claude 的本次任务请求（Owner 可直接转发）
