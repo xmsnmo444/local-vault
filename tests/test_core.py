@@ -221,3 +221,37 @@ def test_prune_missing_scoped_to_directory(tmp_path):
         remaining = list(store.all_chunks())
         assert remaining[0].path == path_b
 
+
+def test_upsert_transaction_safety(tmp_path):
+    """[P2] upsert_chunks 嵌入失败时应回滚，不留半成品。"""
+    cfg = load_config(db_path=str(tmp_path / "v.db"))
+
+    class FailingStore(Store):
+        def embed_text(self, text: str) -> list[float]:
+            if "fail" in text:
+                raise RuntimeError("模拟嵌入失败")
+            return super().embed_text(text)
+
+    with FailingStore(cfg) as store:
+        store.init_schema()
+        store.check_model_consistency()
+
+        p = str(tmp_path / "doc.md")
+        # 先插入正常数据
+        store.upsert_chunks([Chunk("id1", p, 0, 5, "good", 1.0, "h1")])
+        assert store.count() == 1
+
+        # 尝试更新，但嵌入失败
+        try:
+            store.upsert_chunks([Chunk("id2", p, 0, 10, "fail this", 2.0, "h2")])
+            raise AssertionError("应该抛出 RuntimeError")
+        except RuntimeError as e:
+            assert "嵌入失败" in str(e)
+
+        # 验证旧数据仍然存在（回滚成功）
+        assert store.count() == 1, "失败时应保留旧数据"
+        chunks = list(store.all_chunks())
+        assert chunks[0].chunk_id == "id1"
+        assert chunks[0].text == "good"
+
+

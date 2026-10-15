@@ -328,16 +328,14 @@ class Store:
         return [float(x) for x in vecs[0]]
 
     def upsert_chunks(self, chunks: Iterable[Chunk]) -> int:
-        """[M2] 先按 path 清孤儿，再批量插入。返回写入行数。"""
+        """[M2] 先嵌入并准备数据，再在一个事务内删除和插入。返回写入行数。"""
         batch = list(chunks)
         if not batch:
             return 0
 
         paths = {c.path for c in batch}
-        cur = self.conn.cursor()
-        for path in paths:
-            cur.execute("DELETE FROM chunks WHERE path=?", (path,))
 
+        # 先完成嵌入，准备好所有数据
         rows = []
         seen: set[str] = set()
         for c in batch:
@@ -358,13 +356,24 @@ class Store:
                 )
             )
 
-        cur.executemany(
-            "INSERT OR REPLACE INTO chunks"
-            "(chunk_id, path, start, end, text, mtime, content_hash, vec) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            rows,
-        )
-        self.conn.commit()
+        # 现在在一个事务内完成删除和插入
+        cur = self.conn.cursor()
+        cur.execute("BEGIN")
+        try:
+            for path in paths:
+                cur.execute("DELETE FROM chunks WHERE path=?", (path,))
+
+            cur.executemany(
+                "INSERT OR REPLACE INTO chunks"
+                "(chunk_id, path, start, end, text, mtime, content_hash, vec) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+            self.conn.commit()
+        except Exception:
+            self.conn.rollback()
+            raise
+
         return len(rows)
 
     def prune_path(self, path: str) -> int:
