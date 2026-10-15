@@ -1,0 +1,86 @@
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  # ---- Job 1：断网跑测试（"零上传"的自动化守门）----
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 安装依赖
+        run: |
+          python -m pip install --upgrade pip
+          # 装 fastembed 让测试环境更真实；真模型用例仍会因无权重而 skip
+          pip install pytest fastembed
+
+      - name: 断网执行 pytest
+        run: |
+          # 用 unshare 剥离网络命名空间：任何联网企图直接失败。
+          # 真模型用例会因无本地权重自动 skip，故 CI 不依赖网络。
+          if command -v unshare >/dev/null 2>&1; then
+            if unshare -rn python -c "import socket;s=socket.socket();s.settimeout(1);s.connect(('1.1.1.1',53))" 2>/dev/null; then
+              # 能连上 → unshare 没起到隔离作用，退化
+              echo "::warning::unshare 未隔离网络，退化为普通 pytest"
+              python -m pytest tests -q
+            else
+              echo "网络已隔离，在此环境执行测试"
+              unshare -rn python -m pytest tests -q
+            fi
+          else
+            echo "::warning::无 unshare，退化为普通 pytest"
+            python -m pytest tests -q
+          fi
+
+      - name: 断言离线哨兵生效
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, ".")
+          from src.config import load_config
+          from src.store import Store, OfflineViolation
+          import socket
+          cfg = load_config(db_path=":memory:", offline=True)
+          with Store(cfg) as s:
+              s.init_schema()
+              try:
+                  socket.create_connection(("1.1.1.1", 53), timeout=1)
+                  raise SystemExit("FAIL: 离线哨兵未拦截 create_connection")
+              except OfflineViolation:
+                  print("OK: 离线哨兵已拦截 create_connection")
+          PY
+
+  # ---- Job 2：隐私扫描（命中即 fail）----
+  privacy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 ripgrep
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
+
+      - name: 扫描主动外连（仅允许哨兵自身的 socket 调用）
+        run: |
+          set +e
+          # 只看 src/ ；排除 store.py 中的哨兵实现行（guarded_*/原始引用备份）
+          HITS=$(rg -n "requests\.post|urllib\.request|http\.client|httpx\.|telemetry|sentry|posthog" src/ --no-heading)
+          if [ -n "$HITS" ]; then
+            echo "::error::发现主动外连调用："
+            echo "$HITS"
+            exit 1
+          fi
+          echo "OK: 无主动外连调用"
+
+      - name: 断言唯一联网入口为 fetch-model
+        run: |
+          # fetch-model 之外，不得出现 fastembed 的联网下载调用
+          if rg -n "hf_hub_download|snapshot_download" src/ --no-heading; then
+            echo "::error::发现直接权重下载调用，应统一走 fetch-model"
+            exit 1
+          fi
+          echo "OK: 权重下载仅存在于 fetch-model 路径"

@@ -50,6 +50,20 @@ SKIP_DIRS: frozenset[str] = frozenset(
     }
 )
 
+# [v0.2] fastembed 已知模型的向量维度（实测值）。
+# bge-small-zh-v1.5（Qdrant/fastembed 版）实测 512，不是常见的 384。
+_FASTEMBED_DIMS: dict[str, int] = {
+    "BAAI/bge-small-zh-v1.5": 512,
+    "BAAI/bge-small-en-v1.5": 384,
+    "BAAI/bge-base-zh-v1.5": 768,
+    "BAAI/bge-large-zh-v1.5": 1024,
+    "sentence-transformers/all-MiniLM-L6-v2": 384,
+}
+
+DEFAULT_MODEL_CACHE = os.path.join(
+    os.path.expanduser("~"), ".cache", "local-vault", "models"
+)
+
 
 @dataclass
 class Config:
@@ -65,8 +79,22 @@ class Config:
     offline: bool = True
     rrf_k: int = 60
     embed_backend: str = "hash"  # "hash"(内置) | "fastembed"(可选)
-    embed_dim: int = 256
+    embed_dim: int = 0  # 0 = 按后端自动推断（见 resolve_embed_dim）
     skip_dirs: frozenset[str] = field(default_factory=lambda: SKIP_DIRS)
+    model_cache_dir: str = ""  # 空 = 默认 ~/.cache/local-vault/models
+
+    def resolve_embed_dim(self) -> int:
+        """[v0.2] 向量维度按后端推断；显式设置 embed_dim>0 时以显式值为准。
+
+        - hash      → 256（v0.1 既有语义）
+        - fastembed → 依据 model_name 查表（bge-small-zh 系列实测 512）
+        """
+        if self.embed_dim > 0:
+            return self.embed_dim
+        if self.embed_backend == "hash":
+            return 256
+        # fastembed：按模型名查表，未知模型回退 512（bge-small 系默认）
+        return _FASTEMBED_DIMS.get(self.model_name, 512)
 
     def validate(self) -> None:
         """参数自检：越界立即报错，避免跑一半才崩。"""
@@ -85,8 +113,8 @@ class Config:
             raise ValueError(f"embed_batch 必须 > 0，当前 {self.embed_batch}")
         if self.rrf_k <= 0:
             raise ValueError(f"rrf_k 必须 > 0，当前 {self.rrf_k}")
-        if self.embed_dim <= 0:
-            raise ValueError(f"embed_dim 必须 > 0，当前 {self.embed_dim}")
+        if self.embed_dim < 0:
+            raise ValueError(f"embed_dim 不能为负，当前 {self.embed_dim}")
         if self.embed_backend not in ("hash", "fastembed"):
             raise ValueError(
                 f"embed_backend 只支持 'hash' / 'fastembed'，当前 {self.embed_backend!r}"
@@ -95,6 +123,11 @@ class Config:
     @property
     def max_file_bytes(self) -> int:
         return int(self.max_file_mb * 1024 * 1024)
+
+    @property
+    def resolved_cache_dir(self) -> str:
+        """模型权重缓存目录，未设置时用默认路径。"""
+        return self.model_cache_dir or DEFAULT_MODEL_CACHE
 
 
 def load_config(**overrides) -> Config:

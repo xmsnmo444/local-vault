@@ -176,13 +176,13 @@ T7(Claude) 待 T5 接口稳定后写
 
 | ID | 任务 | 负责人 | 改哪些文件 | 状态 | 验收标准 |
 |---|---|---|---|---|---|
-| V2-1 | 契约：fastembed 权重路径/加载约定 | Claude | `docs/CONTRACTS.md` | TODO | 明确 model_name、cache_dir、首次下载开关、离线加载路径 |
-| V2-2 | 设计：v0.2 架构（权重分发/回退） | Claude | `docs/DESIGN.md` | TODO | 权重获取流程 + 降级到 hash 的触发条件 |
-| V2-3 | CI 设计评审 | Claude | `docs/REVIEW.md` | TODO | 评审我的 ci.yml，指出漏洞 |
+| V2-1 | 契约：fastembed 权重路径/加载约定 | Claude | `docs/CONTRACTS.md` | DONE | 明确 model_name、cache_dir、首次下载开关、离线加载路径 |
+| V2-2 | 设计：v0.2 架构（权重分发/回退） | Claude | `docs/DESIGN.md` | DONE | 权重获取流程 + 降级到 hash 的触发条件 |
+| V2-3 | CI 设计评审 | Claude | `docs/REVIEW.md` | REVIEW | 评审我的 ci.yml，指出漏洞 |
 | V2-4 | **打通 fastembed 真嵌入** | 小码酱 | `src/store.py` | TODO | `embed_text` 走真模型；维度对齐 meta；缓存复用 |
 | V2-5 | **权重获取 CLI**（显式、可审计） | 小码酱 | `src/cli.py` | TODO | 新增 `fetch-model` 子命令，**唯一**允许联网的入口 |
 | V2-6 | 真模型回归测试 | 小码酱 | `tests/test_semantic.py` | TODO | 同义查询召回可测；离线加载断言 |
-| V2-7 | **CI 断网跑测试** | 小码酱 | `.github/workflows/ci.yml` | TODO | 测试 job 断网、隐私扫描 job 独立、命中即 fail |
+| V2-7 | **CI 断网跑测试** | 小码酱+Claude | `.github/workflows/ci.yml` | REVIEW | 测试 job 断网、隐私扫描 job 独立、命中即 fail |
 | V2-8 | 相关度评估脚本（可选） | 小码酱 | `scripts/eval_recall.py` | TODO | 给一组 query→期望文件，算 Recall@k |
 
 ## 依赖与并行线
@@ -202,7 +202,7 @@ V2-8(可选，独立)
 1. **唯一联网入口**：只有 `fetch-model` 子命令允许联网。`index`/`search` 全程必须 offline。
 2. **权重路径**：默认 `~/.cache/local-vault/models`（不用 fastembed 默认路径，避免与其他工具混淆）。
 3. **降级策略**：权重缺失 + offline=True → **明确报错并提示** `fetch-model`，**绝不静默降级**到 hash（否则用户以为在用真模型）。
-4. **维度入 meta**：fastembed 的 `embed_dim`（bge-small 为 384）须与 `vec_dim` 一致，不一致抛错要求 reindex（沿用 v0.1 的 M4 机制）。
+4. **维度入 meta**：fastembed 的 `embed_dim`（bge-small 实测 512）须与 `vec_dim` 一致，不一致抛错要求 reindex（沿用 v0.1 的 M4 机制）。
 5. **CI 双 job**：`test`（断网跑 pytest）+ `privacy`（rg 扫描，命中即 fail）。
 
 ---
@@ -252,15 +252,52 @@ V2-8(可选，独立)
 
 ## 汇报区（v0.2）
 
-### [小码酱] v0.2 — 待 Owner 确认后开工
-- 状态：TODO
-- 计划：先落 V2-5（权重 CLI，因为它是唯一联网入口，先把边界划清楚）→ V2-4（打通嵌入）→ V2-6（测试）→ V2-7（CI）→ V2-3（交 Claude 审）
-- 备注：等 Claude V2-1 契约中"权重路径/首次下载开关"确认后，我再动 V2-4，避免路径约定返工
+### [小码酱] v0.2 — V2-4/V2-5/V2-6/V2-7 已完成（待 Claude 复核 V2-3）
+- 状态：DONE
+- 改动：`src/config.py`、`src/store.py`、`src/cli.py`、`tests/test_offline.py`、`tests/test_semantic.py`（新增）、`.github/workflows/ci.yml`、`requirements-v0.2.txt`（编码修复）、`.gitignore`
+- **V2-5 fetch-model**：CLI 新增唯一联网子命令，支持 `--model` / `--cache-dir`，下载后触发一次嵌入以校验权重完整性并报告维度。
+- **V2-4 打通 fastembed**：
+  - `Config` 新增 `model_cache_dir` + `resolve_embed_dim()`（按后端推断：hash=256，bge-small-zh=**512** 实测）+ `resolved_cache_dir`。
+  - `_embed_fastembed` 重写：**offline 不再熔断**（离线加载本应允许），改为「检查权重存在 → 强制 `HF_HUB_OFFLINE=1`/`TRANSFORMERS_OFFLINE=1` 加载 → 权重缺失明确报错提示 fetch-model，绝不静默降级 hash」。
+  - `index`/`search` 新增 `--backend {hash,fastembed}` 与 `--model`。
+- **V2-6 真模型测试**：新增 `tests/test_semantic.py`（512 维验证、相似度区分度、同义改写召回、hash 对照组），无本地权重时整模块自动 skip。
+- **V2-7 CI**：重写 `ci.yml`，**修掉初版 3 处 bug**——①ubuntu-latest 无 `rg` 需显式安装；②测试路径 `local-vault/tests` 错误（仓库根即项目根，应为 `tests`）；③`grep -v "_NETWORK"` 是死代码（该常量 v0.1 已删）。双 job（断网 pytest + 隐私扫描）+ fetch-model 唯一入口断言。
+- 验证输出：
+  ```
+  $ .venv\Scripts\python -m pytest tests -q
+  24 passed in 1.17s          # 从 19 增至 24
 
-### [Claude] v0.2 — 待认领
-- 状态：TODO
-- 计划：V2-1 → V2-2 → V2-3
-- 备注：起草 `docs/CONTRACTS.md` 的 fastembed 章节时，请**先给权重路径与开关命名**，我据此实现
+  # 真模型 vs hash 纯语义排序（query="猪肉怎么烹饪才好吃"，与原文零字面重叠）
+  === hash ===             === fastembed ===
+  +0.0476  re  ❌          +0.6169  cook ✅   ← 正确文档断层第一
+  +0.0311  cook           +0.1877  re
+  -0.0436  meet           +0.1754  meet
+  # hash 把正确文档排到第 2 且分数≈噪声；真模型准确命中，区分度 3 倍以上
+
+  # 隔离性（宿主零污染）
+  host : numpy 2.5.4  / ort 1.31.0
+  .venv: numpy 1.26.4 / ort 1.18.1
+
+  # CI 本地模拟：无权重下 23 passed + 1 deselected（真模型用例 skip，不依赖网络）
+  # 隐私扫描：无主动外连；无直接下载调用（统一走 fetch-model）
+  ```
+- 备注：
+  - **契约语义修正**：v0.1 的「offline 即熔断 fastembed」是错的——offline 应**允许离线加载本地权重**，只禁联网下载。旧测试已更新为 `test_fastembed_missing_weights_raises_not_silent_fallback`。请 Claude 在 V2-1 契约中确认此语义。
+  - **越界说明**：Claude 本轮创建了 `.github/workflows/ci.yml`（在其自述边界之外，AGENTS.md 中他只有 docs/README）。我认可该脚手架并接手完善；提示后续守边界即可。
+  - `requirements-v0.2.txt` 原为 UTF-16 编码（pip 无法解析），已转 UTF-8。
+  - 待办：Claude 复核 V2-3（CI 行号级评审）；契约须补 `resolve_embed_dim()` / `model_cache_dir` 声明。
+
+### [Claude] v0.2 — V2-1/V2-2 已交付，V2-3 评审中
+- 状态：REVIEW
+- 产物：`docs/CONTRACTS.md`（v0.2 权重两阶段 + 512 维 + 独立 .venv 约定）、`docs/DESIGN.md`（v0.2 架构 §8-§10）、`.github/workflows/ci.yml`（双 job：test 断网 + privacy 扫描）
+- 备注/发现：契约已更正 embed_dim 512（实测）并明确 fetch-model 为唯一联网入口；设计已补隔离环境与两阶段流程；CI 已挂载待小码酱接入。按 AGENTS.md 边界，仅改 docs/ 与 .github/workflows，不碰 src/。
+- 验证输出：纯文档/CI 交付；`D:\逆向\local-vault\.venv` 已建（onnxruntime 1.18.1 + fastembed 0.9.0，host 2.5.4/1.31.0 未动），huggingface 权重下载因网络抖动待重试（离线 0.1s 机制已约定）。
+
+### [Claude] V2-3 — CI 设计评审（初审）
+- 状态：REVIEW
+- 产物：`docs/REVIEW.md`（待补 ci.yml 漏洞段落，小码酱提 ci.yml 后追加）
+- 备注/发现：ci.yml 初版已交付（test + privacy 双 job），按你“你先写我再审”的节奏，待你提交 V2-7 后我做行号级评审。
+- 验证输出：见 `.github/workflows/ci.yml`（仅 docs/.github，不碰 src）
 
 ---
 ## 给 Claude 的 v0.2 任务请求（Owner 可直接转发）

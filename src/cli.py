@@ -21,7 +21,12 @@ from .search import search
 
 
 def cmd_index(args: argparse.Namespace) -> int:
-    cfg = load_config(db_path=args.db)
+    overrides = {"db_path": args.db}
+    if getattr(args, "backend", None):
+        overrides["embed_backend"] = args.backend
+    if getattr(args, "model", None):
+        overrides["model_name"] = args.model
+    cfg = load_config(**overrides)
     root = os.path.abspath(args.directory)
     if not os.path.isdir(root):
         print(f"错误：目录不存在 {root}", file=sys.stderr)
@@ -96,8 +101,61 @@ def cmd_index(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_fetch_model(args: argparse.Namespace) -> int:
+    """[V2-5] 唯一允许联网的子命令：显式下载模型权重。
+
+    下载后所有 index/search 走离线加载（HF_HUB_OFFLINE=1）。
+    这是本项目"零上传"红线的唯一例外，且只下载、不上传。
+    """
+    cfg = load_config(db_path=args.db, offline=False)
+    cache_dir = args.cache_dir or cfg.resolved_cache_dir
+    model = args.model or cfg.model_name
+
+    os.makedirs(cache_dir, exist_ok=True)
+    print(f"模型：{model}")
+    print(f"缓存目录：{cache_dir}")
+    print("正在下载权重（这是唯一联网操作，只下载不上传）…")
+
+    try:
+        from fastembed import TextEmbedding  # type: ignore
+    except ImportError as exc:
+        print(
+            "错误：未安装 fastembed。请在项目虚拟环境中执行：\n"
+            "  .venv\\Scripts\\python -m pip install -r requirements-v0.2.txt",
+            file=sys.stderr,
+        )
+        return 2
+
+    import time
+
+    t0 = time.time()
+    try:
+        model_obj = TextEmbedding(model_name=model, cache_dir=cache_dir)
+        # 触发一次真实嵌入，确保权重完整可用
+        vecs = list(model_obj.embed(["验证权重可用性"]))
+        dim = len(vecs[0])
+    except Exception as exc:  # noqa: BLE001 — 网络/磁盘/版本错误统一提示
+        print(f"下载失败：{exc}", file=sys.stderr)
+        print(
+            "提示：若为 SSL/网络错误，请稍后重试；"
+            "若为 onnxruntime segfault，请确认使用项目 .venv（锁定 1.18.1）。",
+            file=sys.stderr,
+        )
+        return 2
+
+    dt = time.time() - t0
+    print(f"完成：权重就绪，向量维度 {dim}，耗时 {dt:.1f}s")
+    print(f"接下来 index/search 将离线加载（无需联网）。")
+    return 0
+
+
 def cmd_search(args: argparse.Namespace) -> int:
-    cfg = load_config(db_path=args.db, rrf_k=args.rrf_k)
+    overrides = {"db_path": args.db, "rrf_k": args.rrf_k}
+    if getattr(args, "backend", None):
+        overrides["embed_backend"] = args.backend
+    if getattr(args, "model", None):
+        overrides["model_name"] = args.model
+    cfg = load_config(**overrides)
 
     from .store import Store
 
@@ -164,6 +222,10 @@ def build_parser() -> argparse.ArgumentParser:
     pi = sub.add_parser("index", help="索引一个目录")
     pi.add_argument("directory", help="要索引的目录")
     pi.add_argument("--force", action="store_true", help="忽略增量，强制重索引")
+    pi.add_argument(
+        "--backend", choices=["hash", "fastembed"], help="嵌入后端（默认 hash）"
+    )
+    pi.add_argument("--model", help="fastembed 模型名（默认 BAAI/bge-small-zh-v1.5）")
     pi.set_defaults(func=cmd_index)
 
     ps = sub.add_parser("search", help="语义 + 关键词混合检索")
@@ -174,10 +236,21 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument(
         "--rrf-k", type=_positive_int, default=60, help="RRF 常数（默认 60）"
     )
+    ps.add_argument(
+        "--backend", choices=["hash", "fastembed"], help="嵌入后端（须与索引时一致）"
+    )
+    ps.add_argument("--model", help="fastembed 模型名（须与索引时一致）")
     ps.set_defaults(func=cmd_search)
 
     pt = sub.add_parser("stats", help="查看库统计")
     pt.set_defaults(func=cmd_stats)
+
+    pf = sub.add_parser(
+        "fetch-model", help="[唯一联网命令] 下载 fastembed 模型权重"
+    )
+    pf.add_argument("--model", help="模型名（默认 BAAI/bge-small-zh-v1.5）")
+    pf.add_argument("--cache-dir", help="权重缓存目录（默认 ~/.cache/local-vault/models）")
+    pf.set_defaults(func=cmd_fetch_model)
 
     return p
 

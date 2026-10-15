@@ -159,18 +159,41 @@ CREATE TABLE IF NOT EXISTS meta (
 
 ---
 
-## 8. 未来演进（非 v0.1）
+## 8. v0.2 架构（真模型 + 权重两阶段 + 隔离环境）
 
-* 精确 tokenizer 切块（可选 `--precise`）。
-* `sqlite-vec` 或 `hnswlib` ANN 索引，支持 10 万+ chunks。
-* 截图 OCR（`paddleocr` 本地）与 PDF 解析（`pymupdf`）。
-* 文件监听 `watchdog` 增量自动索引。
-* TUI / 本地 Web UI（仍零上传，`localhost`  only）。
-* 接 `fastembed` 真模型（已预留 `cfg.embed_backend`，本地权重可分发）。
+> 基线 `v0.1`（`hash` 256d）→ `v0.2`（`fastembed` 512d），Owner 已选 **方案 A：独立 `.venv`**。
+
+**隔离环境**
+
+- `local-vault/.venv`（Python 3.12，`onnxruntime==1.18.1` + `numpy==1.26.4` + `fastembed==0.9.0`），`requirements-v0.2.txt` 锁定；宿主 `numpy 2.5.4 / onnxruntime 1.31.0` 不动（已验证）。
+- `onnxruntime 1.31.0` 在本机 `import` 即 segfault（`0xC0000005`），`sentence-transformers` 依赖 `torch`（本机 `c10.dll` 已坏），故不走宿主 Python 与 `torch` 后端。
+
+**权重两阶段**
+
+```
+[联网一次]  python -m src.cli fetch-model  ──▶  ~/.cache/local-vault/models  (HF Hub)
+[离线常态]  index / search  ── HF_HUB_OFFLINE=1 ──▶  仅从 cache_dir 加载 (实测 0.1s)
+              权重缺失 + offline=True  ──▶  明确报错提示 fetch-model，禁止静默降级到 hash
+```
+
+**维度修正**
+
+- `BAAI/bge-small-zh-v1.5`（fastembed/Qdrant）实测 **512 维**（非契约初版 384）；`hash` 仍 256。`meta` 三键 `vec_dim/embed_backend/model_name` 已卡死换模型不重建的静默错乱（P0-1 回归测试）。
+
+**回退与不变量**
+
+- 回退：权重缺失不回退，报错；用户显式改 `embed_backend="hash"` 才回 `hash`。
+- 不变量：`fetch-model` 是唯一联网入口；`index`/`search` 全程 `offline=True`（`socket` 三件套哨兵 + `fastembed` 入口熔断）。
+
+## 9. 未来演进（v0.1 之后，含 v0.2 之后）
+
+* v0.2 已定：`fetch-model` + `fastembed` 512d + 独立 `.venv` + CI 双 job（见 `TASKS.md v0.2`）。
+* 后续：精确 tokenizer 切块（`--precise`）、`sqlite-vec`/`hnswlib` ANN（>5万 chunks）、截图 OCR / PDF 解析、文件监听 `watchdog`、TUI / 本地 Web UI（`localhost` only）。
 
 ---
 
-## 9. 校验
+## 10. 校验
 
-* 本文档已同步至 `docs/CONTRACTS.md` 修订版（exts 17 种、`skip_dirs`、`content_hash` 迁移、`meta` 三键、`cli` 单遍历与参数校验）。
+* 本文档已同步至 `docs/CONTRACTS.md` 修订版（v0.2 权重两阶段、512 维、隔离环境、`fetch-model` 唯一联网入口、`skip_dirs`、`content_hash` 迁移、`meta` 三键、`cli` 单遍历与参数校验）。
 * `docs/REVIEW.md` 已完成代码级复审及 P0/P1/P2 修复复核，重点核查零上传与接口一致性。
+* v0.2 的 `V2-3 CI 评审` 待 `ci.yml` 落地后补。

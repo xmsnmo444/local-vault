@@ -55,7 +55,7 @@ class Config:
     offline: bool = True           # 强制离线，True 时禁止任何网络调用
     rrf_k: int = 60                # [M7] RRF 融合常数，可被 search() 覆盖
     embed_backend: str = "hash"    # "hash"(内置，零依赖，v0.1 默认) | "fastembed"(可选)
-    embed_dim: int = 256           # [M4] 当前后端向量维度，写入 meta 表
+    embed_dim: int = 256           # [M4] 当前后端向量维度，写入 meta 表（hash=256；fastembed/bge-small-zh=512，见 v0.2 修正）
     skip_dirs: frozenset[str] = ... # [P1-4] 遍历时跳过的目录名集合（.git/node_modules 等）
 
 def load_config(**overrides) -> Config: ...
@@ -64,6 +64,46 @@ def load_config(**overrides) -> Config: ...
 > [P1-4] 说明：`exts` 已从初版 7 种扩展为 17 种纯文本扩展名（新增 `.markdown/.js/.ts/.htm/.yaml/.yml/.toml/.ini/.cfg/.rst`），并新增 `skip_dirs` 字段。此为正向扩展，已在本表声明。
 > [MINOR] 环境变量兜底：`LV_DB_PATH` / `LV_OFFLINE` / `LV_EXTS` 可覆盖默认值（非契约扩展，属便利功能）。
 > [P1-5] meta 表三键 `vec_dim` / `embed_backend` / `model_name` 分别存储；旧库缺键自动补齐。旧库缺 `content_hash` 列时 `init_schema` 自动 `ALTER TABLE` 迁移；旧库 `content_hash=''` 视为无需二次校验。
+
+### v0.2 新增：权重获取与离线两阶段约定（Owner 已确认方案 A）
+
+> 实测结论（2026-10-15，`D:\逆向\local-vault\.venv`）：`BAAI/bge-small-zh-v1.5`（fastembed/Qdrant 版）实测维度 **512**（非 384）；`onnxruntime 1.31.0` 在本机 `import` 即 segfault，`1.18.1` 可用但会降 `numpy` 至 1.26，故 **v0.2 必须走独立 `.venv`**。
+
+**V2-0 隔离环境（已落地）**
+
+- 宿主 Python 不动（`numpy 2.5.4 / onnxruntime 1.31.0` 保留）。
+- 项目自带 `local-vault/.venv`（Python 3.12），锁定 `onnxruntime==1.18.1`、`numpy==1.26.4`、`fastembed==0.9.0`，清单 `requirements-v0.2.txt`（`pip freeze`）。
+- `.venv/` 已在 `.gitignore`，不入仓；CI 与本地均以 `.venv` 为准。
+
+**Config 维度修正**
+
+- `embed_dim` 含义不变，但默认值与校验按后端分支：
+  - `embed_backend="hash"` → `embed_dim=256`（v0.1 现状不变）。
+  - `embed_backend="fastembed"` + `model_name="BAAI/bge-small-zh-v1.5"` → `embed_dim=512`（实测）。
+
+  `Store.check_model_consistency()` 已按三键比对，维度不匹配抛 `RuntimeError` 提示删库重建（沿用 M4）。
+
+**唯一联网入口：`fetch-model`**
+
+```python
+# CLI 新增（唯一允许联网的子命令）
+#   python -m src.cli fetch-model [--model BAAI/bge-small-zh-v1.5] [--cache-dir ~/.cache/local-vault/models]
+# 约定：
+# - index / search / stats 全程必须 offline=True，任何隐式联网抛 OfflineViolation。
+# - fetch-model 显式联网下载一次，写入 cache_dir（默认 ~/.cache/local-vault/models，不用 fastembed 默认路径，避免与其他工具混淆）。
+# - 之后所有 Store 加载走 HF_HUB_OFFLINE=1 强制离线（实测 0.1s），权重缺失 + offline=True → 明确报错并提示 fetch-model，禁止静默降级到 hash。
+def cmd_fetch_model(args: argparse.Namespace) -> int: ...
+```
+
+**两阶段语义（契约级）**
+
+1. 阶段一（联网）：`fetch-model` 一次性下载。
+2. 阶段二（离线）：`Store._embed_fastembed` 仅从 `cache_dir` 离线加载；`cfg.offline=True` 时入口直接熔断 + 检查 `cache_dir` 是否存在，缺失抛错。
+
+**不变量**
+
+- `index`/`search` 永远离线；`fetch-model` 是唯一例外，CI 中 `fetch-model` 不应被调用。
+- 维度与权重一一绑定：换 `model_name` 即换 `embed_dim`，旧库向量静默错乱已被 `test_model_name_change_triggers_reindex` 卡死。
 ```
 
 ### src/indexer.py

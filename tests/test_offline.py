@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import socket
 import sys
 from pathlib import Path
@@ -86,12 +87,44 @@ def test_offline_can_be_disabled():
         pass
 
 
-def test_embed_fastembed_blocked_when_offline():
-    """[P0-2] offline 时 fastembed 入口必须熔断，不得静默下载权重。"""
+def test_fastembed_missing_weights_raises_not_silent_fallback(tmp_path):
+    """[v0.2] offline 且权重缺失 → 明确报错提示 fetch-model，绝不静默降级 hash。
+
+    语义变更：v0.1 时 offline 直接熔断 fastembed；v0.2 允许**离线加载**本地权重，
+    只禁止联网下载。因此这里的期望是"权重缺失报错"，而非 OfflineViolation。
+    """
+    empty_cache = tmp_path / "empty_models"
+    empty_cache.mkdir()
+    cfg = load_config(
+        db_path=":memory:",
+        offline=True,
+        embed_backend="fastembed",
+        model_cache_dir=str(empty_cache),
+    )
+    with Store(cfg) as store:
+        store.init_schema()
+        with pytest.raises(RuntimeError) as exc:
+            store.embed_text("hello")
+        msg = str(exc.value)
+        # 期望因"权重缺失"报错（而非 fastembed 未安装导致的间接报错）
+        assert "fetch-model" in msg, f"报错应提示 fetch-model，实际：{msg}"
+        assert "未找到本地模型权重" in msg, f"应明确说明权重缺失，实际：{msg}"
+
+
+def test_fastembed_offline_load_when_weights_present(tmp_path):
+    """[v0.2] 权重存在时，offline 下应能**离线加载**（不熔断）。
+
+    若无本地权重（CI 环境常见）则跳过，避免依赖网络。
+    """
+    from src.config import DEFAULT_MODEL_CACHE
+
+    if not os.path.isdir(DEFAULT_MODEL_CACHE):
+        pytest.skip("本机无已下载权重，跳过离线加载用例")
+
     cfg = load_config(
         db_path=":memory:", offline=True, embed_backend="fastembed"
     )
     with Store(cfg) as store:
         store.init_schema()
-        with pytest.raises(OfflineViolation):
-            store.embed_text("hello")
+        vec = store.embed_text("红烧肉怎么做")
+        assert len(vec) == 512, f"bge-small-zh 维度应为 512，实际 {len(vec)}"

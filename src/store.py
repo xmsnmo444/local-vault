@@ -234,7 +234,7 @@ class Store:
         meta 三键：vec_dim / embed_backend / model_name。
         [P0-1] backend 与 model_name 必须分开存，否则切换 model_name 不触发重建。
         """
-        dim = str(self.cfg.embed_dim)
+        dim = str(self.cfg.resolve_embed_dim())
         backend = self.cfg.embed_backend
         model = self.cfg.model_name
         keys = {
@@ -275,7 +275,7 @@ class Store:
         if cached is not None:
             return cached
         if self.cfg.embed_backend == "hash":
-            vec = _hash_embed(text, self.cfg.embed_dim)
+            vec = _hash_embed(text, self.cfg.resolve_embed_dim())
         else:  # fastembed（可选，本地权重）
             vec = self._embed_fastembed(text)
         if len(self._embed_cache) < 4096:
@@ -283,36 +283,49 @@ class Store:
         return vec
 
     def _embed_fastembed(self, text: str) -> list[float]:
-        """可选本地模型后端。
+        """fastembed 真模型后端（v0.2）。
 
-        [P0-2] offline 时入口直接熔断，杜绝 TextEmbedding 静默联网下载权重。
-        [MINOR] 首次加载前检查本地缓存目录，缺失则明确报错。
+        两阶段语义（见 docs/CONTRACTS.md v0.2）：
+        - offline=True 允许**离线加载本地权重**，只是禁止联网下载。
+        - 权重缺失 → 明确报错并提示 `fetch-model`，绝不静默降级到 hash。
+        - 加载时强制 HF_HUB_OFFLINE=1 / TRANSFORMERS_OFFLINE=1，物理上杜绝联网。
         """
-        if self.cfg.offline:
-            raise OfflineViolation(
-                "offline mode: fastembed 已禁用（不允许下载模型权重）。"
-                "如需使用，请先离线预置权重，或设 offline=False。"
-            )
-
-        try:
-            from fastembed import TextEmbedding  # type: ignore
-        except ImportError as exc:  # pragma: no cover
-            raise RuntimeError(
-                "embed_backend='fastembed' 需要先 pip install fastembed 并预置本地权重"
-            ) from exc
-
         if not hasattr(self, "_fe"):
-            cache_dir = os.path.join(os.path.expanduser("~"), ".cache", "fastembed")
-            if not os.path.isdir(cache_dir):  # pragma: no cover
+            cache_dir = self.cfg.resolved_cache_dir
+            if not os.path.isdir(cache_dir) or not os.listdir(cache_dir):
                 raise RuntimeError(
-                    f"未找到本地模型缓存 {cache_dir}。"
-                    "请先联网下载一次权重，或改用 embed_backend='hash'。"
+                    f"未找到本地模型权重：{cache_dir}\n"
+                    f"请先运行：python -m src.cli fetch-model "
+                    f"--model {self.cfg.model_name}\n"
+                    "（或改用 --backend hash 走内置嵌入）"
                 )
-            self._fe = TextEmbedding(  # pragma: no cover
-                model_name=self.cfg.model_name, cache_dir=cache_dir
-            )
-        vecs = list(self._fe.embed([text]))  # pragma: no cover
-        return [float(x) for x in vecs[0]]  # pragma: no cover
+
+            try:
+                from fastembed import TextEmbedding  # type: ignore
+            except ImportError as exc:
+                raise RuntimeError(
+                    "embed_backend='fastembed' 需要安装 fastembed："
+                    "pip install -r requirements-v0.2.txt"
+                ) from exc
+
+            # 强制离线加载：即使宿主能联网，也只在本地缓存里找权重
+            saved = {}
+            for var in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE"):
+                saved[var] = os.environ.get(var)
+                os.environ[var] = "1"
+            try:
+                self._fe = TextEmbedding(
+                    model_name=self.cfg.model_name, cache_dir=cache_dir
+                )
+            finally:
+                for var, old in saved.items():
+                    if old is None:
+                        os.environ.pop(var, None)
+                    else:
+                        os.environ[var] = old
+
+        vecs = list(self._fe.embed([text]))
+        return [float(x) for x in vecs[0]]
 
     def upsert_chunks(self, chunks: Iterable[Chunk]) -> int:
         """[M2] 先按 path 清孤儿，再批量插入。返回写入行数。"""

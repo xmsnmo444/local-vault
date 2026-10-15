@@ -13,7 +13,6 @@ venv/
 # local models / caches
 models/
 .cache/
-# demo corpus（本地演练用，不入库）
-demo/
-# 契约修订工作区
 .pytest_cache/
+# demo corpus (local practice only, not tracked)
+demo/
