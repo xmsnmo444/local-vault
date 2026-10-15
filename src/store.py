@@ -546,7 +546,7 @@ class Store:
         chunks = self.count()
         paths = self.conn.execute("SELECT COUNT(DISTINCT path) FROM chunks").fetchone()[0]
         size = self.conn.execute(
-            "SELECT COALESCE(SUM(LENGTH(text)), 0) FROM chunks"
+            "SELECT COALESCE(SUM(LENGTH(CAST(text AS BLOB))), 0) FROM chunks"
         ).fetchone()[0]
         return {"chunks": chunks, "files": paths, "text_bytes": int(size)}
 

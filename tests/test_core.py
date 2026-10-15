@@ -405,3 +405,16 @@ def test_incremental_index_mtime_only_update(tmp_path):
 
 
 
+
+
+def test_stats_text_bytes_uses_byte_length(tmp_path):
+    """stats() 的 text_bytes 应返回字节数而不是字符数。"""
+    cfg = load_config(db_path=str(tmp_path / "v.db"))
+    with Store(cfg) as store:
+        store.init_schema()
+        store.check_model_consistency()
+        # "你好" 在 UTF-8 中是 6 字节（每个字符 3 字节）
+        store.upsert_chunks([Chunk("id1", "p1", 0, 2, "你好", 1.0, "h1", 6)])
+        stats = store.stats()
+        assert stats["text_bytes"] == 6
+
