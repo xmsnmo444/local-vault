@@ -372,10 +372,21 @@ class Store:
         self.conn.commit()
         return cur.rowcount
 
-    def prune_missing(self, existing_paths: set[str]) -> int:
-        """删除磁盘上已不存在的文件的 chunk。返回删除数。"""
+    def prune_missing(self, existing_paths: set[str], root_dir: str | None = None) -> int:
+        """删除磁盘上已不存在的文件的 chunk。返回删除数。
+
+        root_dir: 如果提供，只清理该目录下的路径，避免误删其他目录的索引。
+        """
         all_paths = [r[0] for r in self.conn.execute("SELECT DISTINCT path FROM chunks")]
-        gone = [p for p in all_paths if p not in existing_paths]
+
+        if root_dir is not None:
+            root_dir = os.path.abspath(root_dir)
+            # 只检查本次索引目录下的路径
+            relevant_paths = [p for p in all_paths if os.path.abspath(p).startswith(root_dir + os.sep) or os.path.abspath(p) == root_dir]
+            gone = [p for p in relevant_paths if p not in existing_paths]
+        else:
+            gone = [p for p in all_paths if p not in existing_paths]
+
         total = 0
         for p in gone:
             total += self.prune_path(p)

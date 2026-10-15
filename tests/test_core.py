@@ -190,3 +190,34 @@ def test_content_hash_stable():
     assert content_hash("abc") == content_hash("abc")
     assert content_hash("abc") != content_hash("abd")
     assert len(content_hash("abc")) == 40
+
+
+def test_prune_missing_scoped_to_directory(tmp_path):
+    """[P1] prune_missing 只应清理指定目录下的路径，不应误删其他目录的索引。"""
+    cfg = load_config(db_path=str(tmp_path / "v.db"))
+    with Store(cfg) as store:
+        store.init_schema()
+        store.check_model_consistency()
+
+        dir_a = tmp_path / "dir_a"
+        dir_b = tmp_path / "dir_b"
+        dir_a.mkdir()
+        dir_b.mkdir()
+
+        path_a = str(dir_a / "file_a.md")
+        path_b = str(dir_b / "file_b.md")
+
+        # 索引两个不同目录的文件
+        store.upsert_chunks([Chunk("a1", path_a, 0, 5, "content a", 1.0, "ha")])
+        store.upsert_chunks([Chunk("b1", path_b, 0, 5, "content b", 1.0, "hb")])
+        assert store.count() == 2
+
+        # 清理 dir_a，但 dir_a 内文件已不存在（existing_paths 为空）
+        removed = store.prune_missing(set(), str(dir_a))
+        assert removed == 1, "应该删除 dir_a 下的 1 个 chunk"
+        assert store.count() == 1, "dir_b 的 chunk 应该保留"
+
+        # 验证保留的是 dir_b 的内容
+        remaining = list(store.all_chunks())
+        assert remaining[0].path == path_b
+

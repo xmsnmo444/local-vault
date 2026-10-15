@@ -84,7 +84,7 @@ def cmd_index(args: argparse.Namespace) -> int:
                     indexed_chunks += store.upsert_chunks(chunks)
                     indexed_files += 1
 
-            removed = store.prune_missing(existing_now)
+            removed = store.prune_missing(existing_now, root)
             if removed:
                 print(f"清理失效 chunk：{removed}")
 
