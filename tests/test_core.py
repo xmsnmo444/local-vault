@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from src.cli import main  # noqa: E402
 from src.config import load_config  # noqa: E402
 from src.indexer import chunk_text, content_hash, iter_files, read_text  # noqa: E402
 from src.search import search  # noqa: E402
@@ -195,6 +197,30 @@ def test_content_hash_stable():
     assert content_hash("abc") == content_hash("abc")
     assert content_hash("abc") != content_hash("abd")
     assert len(content_hash("abc")) == 40
+
+
+def test_cli_generates_stable_chunk_id(tmp_path):
+    """[P9] CLI 应按 path:start:end 生成稳定 ID，重复索引不产生重复块。"""
+    root = tmp_path / "docs"
+    root.mkdir()
+    file_path = root / "note.md"
+    content = "stable chunk id"
+    file_path.write_text(content, encoding="utf-8")
+    db_path = tmp_path / "vault.db"
+    argv = ["--db", str(db_path), "index", str(root), "--backend", "hash"]
+
+    assert main(argv) == 0
+    assert main(argv) == 0
+
+    cfg = load_config(db_path=str(db_path), embed_backend="hash")
+    with Store(cfg) as store:
+        rows = list(store.conn.execute(
+            "SELECT chunk_id, path, start, end FROM chunks"
+        ))
+    expected_id = hashlib.sha1(
+        f"{file_path}:0:{len(content)}".encode("utf-8")
+    ).hexdigest()
+    assert rows == [(expected_id, str(file_path), 0, len(content))]
 
 
 def test_prune_missing_scoped_to_directory(tmp_path):

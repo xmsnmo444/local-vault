@@ -25,7 +25,7 @@
 │ 遍历 + 切块   │──▶│ 嵌入 + SQLite  │◀──│ 混合检索     │
 │ iter_files    │   │ Store / vec    │   │ embed_query  │
 │ chunk_text    │   │ upsert/commit  │   │ search (RRF) │
-│ iter_chunks   │   │ search_vector  │   │              │
+│ read_text     │   │ search_vector  │   │              │
 └───────┬───────┘   └───────┬────────┘   └──────┬───────┘
         │ Chunk 流          │ Hit/Top-K         │ Hit[]
         └───────────────────┴───────────────────┘
@@ -47,7 +47,7 @@
 | 模块 | 职责 | 输入 | 输出 | 允许依赖 |
 |---|---|---|---|---|
 | `config` | 配置加载 | `**overrides` | `Config` dataclass | 无 |
-| `indexer` | 遍历与切块 | `root, cfg` | `Iterator[Chunk]` | `config` |
+| `indexer` | 遍历、读取与切块 | `root, cfg` | 文件路径与 `(start,end,text)` 片段 | `config` |
 | `store` | 嵌入与持久化 | `Chunk` | `chunks` + `meta` 表 | `config` |
 | `search` | 混合检索 | `q: str` | `list[Hit]` | `config`, `store` |
 | `cli` | 命令行 | `argv` | `exit code` | 全部 |
@@ -60,16 +60,16 @@
 
 ```
 dir ── iter_files(cfg.exts 17种, max_file_mb, 跳过 cfg.skip_dirs[.git/node_modules/__pycache__/.venv/dist/build/.idea/.vscode 等], 二进制检测 \x00)
-      ── 读文件 (utf-8, errors=ignore, 前 4096 字节探针)
+      ── 读文件 (utf-8-sig，失败回退 gb18030；前 4096 字节探针)
       ── chunk_text(cfg.chunk_size=512, overlap=64) → list[(start,end,text)]（空/全空白→[]）
-      ── 组装 Chunk(chunk_id=sha1(f"{abs_path}:{start}:{end}").hexdigest() 40位, path, mtime, content_hash=sha1(text))
+      ── CLI 组装 Chunk(chunk_id=sha1(f"{abs_path}:{start}:{end}").hexdigest() 40位, path, mtime, size, content_hash=sha1(text))
       ── Store.needs_reindex(path, mtime, content_hash)? ──否──▶ 跳过
       │                                              ──是──▶ 本地模型嵌入 (hash 256d / fastembed 可选, batch=32)
       │                                                     float32 → bytes (BLOB, 已归一化)
-      └───────────────────────────────────────────────────── Store.upsert_chunks()先按 path 清孤儿再批量插入 → commit() + prune_missing()
+      └───────────────────────────────────────────────────── upsert_chunks() 先完成嵌入，再事务内按 path 删除并插入；prune_missing() 清失效路径
 ```
 
-* 幂等：`chunk_id` 稳定，重复 `index` 为 upsert，不产生重复行；同 path 先 `DELETE WHERE path=?` 再插入，编辑后旧 chunk 不残留。
+* 幂等：`chunk_id` 稳定，重复 `index` 不产生重复行；`upsert_chunks` 在嵌入全部完成后，以单一事务替换同 path 的旧 chunk。
 * 增量：`needs_reindex` 以 `mtime` 为主探针 + `content_hash` 二次校验，`mtime` 被篡改或同 `mtime` 不同内容可被捕捉。
 * 离线：`cfg.offline=True` 时，`Store.__init__` 首行 `assert_offline()` 安装哨兵（拦截 `socket.connect` / `getaddrinfo` / `create_connection`，引用计数归零才卸载），`_embed_fastembed` 入口直接熔断，禁止任何 `hf_hub_download` 网络回退。
 

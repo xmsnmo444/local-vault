@@ -132,7 +132,7 @@ config → indexer → store → search → cli
 ```
 
 * `config`：无依赖，`Config` + `load_config` + `validate` + `resolve_embed_dim()` / `resolved_cache_dir`。
-* `indexer`：`iter_files`（扩展名/大小/二进制探针/隐藏目录过滤）→ `chunk_text`（字符切块，空文本返回 `[]`）→ `iter_chunks`。
+* `indexer`：`iter_files`（扩展名/大小/二进制探针/隐藏目录过滤）→ `chunk_text`（字符切块，空文本返回 `[]`）；`cli.cmd_index` 组装 `Chunk` 并生成稳定 `chunk_id`。
 * `store`：`Store`（建表 `chunks` + `meta`、upsert 先删后插防孤儿、`needs_reindex` 以 mtime+content_hash 双因子、维度/模型一致性校验、纯内存 BM25、向量余弦；`_embed_fastembed` 强制离线加载）。
 * `search`：语义 Top-N（`top_k*4`）∪ BM25 Top-N → RRF（`k=cfg.rrf_k=60` 可覆盖）→ `Hit{source=semantic|keyword|hybrid}`。
 * `cli`：仅编排，含 `prune_missing` 失效清理与 `fetch-model`。

@@ -11,12 +11,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-from typing import TYPE_CHECKING, Iterator
+from typing import Iterator
 
 from .config import Config
-
-if TYPE_CHECKING:
-    from .store import Chunk
 
 log = logging.getLogger("local_vault.indexer")
 
@@ -113,6 +110,11 @@ def content_hash(text: str) -> str:
     return hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()
 
 
+def make_chunk_id(path: str, start: int, end: int) -> str:
+    """按路径和字符偏移生成稳定的 chunk ID。"""
+    return hashlib.sha1(f"{path}:{start}:{end}".encode("utf-8")).hexdigest()
+
+
 def chunk_text(text: str, cfg: Config) -> list[tuple[int, int, str]]:
     """按字符近似 token 切块，块间保留 overlap。
 
@@ -142,30 +144,3 @@ def chunk_text(text: str, cfg: Config) -> list[tuple[int, int, str]]:
     return spans
 
 
-def iter_chunks(root: str, cfg: Config) -> "Iterator[Chunk]":
-    """遍历并产出 Chunk 流。
-
-    Chunk 延迟导入以避免与 store 的循环依赖。
-    """
-    from .store import Chunk
-
-    for path in iter_files(root, cfg):
-        try:
-            text = read_text(path)
-            st = os.stat(path)
-        except (PermissionError, OSError, UnicodeDecodeError) as exc:
-            log.warning("读取失败，跳过 %s: %s", path, exc)
-            continue
-
-        chash = content_hash(text)
-        for start, end, piece in chunk_text(text, cfg):
-            cid = hashlib.sha1(f"{path}:{start}:{end}".encode("utf-8")).hexdigest()
-            yield Chunk(
-                chunk_id=cid,
-                path=path,
-                start=start,
-                end=end,
-                text=piece,
-                mtime=st.st_mtime,
-                content_hash=chash,
-            )

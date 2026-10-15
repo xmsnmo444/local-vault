@@ -10,13 +10,12 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
 import sys
 import time
 
 from .config import load_config
-from .indexer import chunk_text, content_hash, iter_files, read_text
+from .indexer import chunk_text, content_hash, iter_files, make_chunk_id, read_text
 from .search import search
 
 
@@ -75,9 +74,7 @@ def cmd_index(args: argparse.Namespace) -> int:
 
                 chunks = []
                 for start, end, piece in chunk_text(text, cfg):
-                    cid = hashlib.sha1(
-                        f"{path}:{start}:{end}".encode("utf-8")
-                    ).hexdigest()
+                    cid = make_chunk_id(path, start, end)
                     chunks.append(
                         Chunk(
                             chunk_id=cid,

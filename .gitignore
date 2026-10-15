@@ -16,3 +16,6 @@ models/
 .pytest_cache/
 # demo corpus (local practice only, not tracked)
 demo/
+
+# local patches
+*.zip

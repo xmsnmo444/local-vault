@@ -50,7 +50,7 @@
 * `[MAJOR] src/store.py:203-222 — meta 存储错位 — ✅ 已修复：meta 改三键 vec_dim/embed_backend/model_name 分开存储，逐键比对，旧库缺键自动补齐；测试 test_model_name_change_triggers_reindex 卡死该回归。`
 * `[MAJOR] src/store.py:172-187 — content_hash 列迁移 — ✅ 已修复：init_schema 新增 _migrate()，PRAGMA table_info 检缺列补 ALTER TABLE；测试 test_legacy_db_missing_content_hash_column 通过。`
 * `[MAJOR] src/config.py:13-33 / 55-69 — Config 扩展超出契约 — ✅ 已修复：docs/CONTRACTS.md 已更新 exts 17 种 + skip_dirs 字段，TASKS.md 契约修订表已声明。`
-* `[MINOR] src/indexer.py:120 — iter_chunks 类型标注 — ✅ 已修复：改为 Iterator[Chunk] + TYPE_CHECKING 导入。`
+* `[MINOR] src/indexer.py:120 — iter_chunks 类型标注 — ✅ 历史问题已修复；该未使用函数后续已删除，统一由 make_chunk_id() 生成 chunk ID。`
 * `[MINOR] src/store.py:192-196 — _meta_get 类型收窄 — ✅ 已修复：已改为三键逐一比对，缺键分支补齐，逻辑更明确。`
 * `[MINOR] docs/CONTRACTS.md — content_hash 默认值说明 — ✅ 已修复：契约已补"旧库 content_hash='' 视为无需二次校验"及迁移说明。`
 
@@ -66,7 +66,7 @@
 ### 3.2 src/indexer.py — ✅ 已修复
 
 * `[MAJOR] 过滤 "$" 前缀 — ✅ 已修复：已移除 d.startswith("$") 隐式过滤，仅保留 cfg.skip_dirs。`
-* `iter_chunks` 类型标注已修正为 `Iterator[Chunk]` + `TYPE_CHECKING`。
+* 未使用的 `iter_chunks` 已删除；CLI 组装 `Chunk`，并通过 `make_chunk_id()` 生成 ID。
 * 空文件/二进制跳过、chunk 空白块丢弃、utf-8 容错均符合契约，v0.1 可接受。
 
 ### 3.3 src/store.py — ✅ 已修复

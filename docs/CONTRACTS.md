@@ -6,7 +6,7 @@
 
 ```
 src/config.py   : 配置加载，无依赖
-src/indexer.py  : 遍历 + 切块，产出 Chunk 流
+src/indexer.py  : 遍历 + 读取 + 切块；CLI 组装 Chunk
 src/store.py    : 嵌入 + SQLite 读写
 src/search.py   : 混合检索，返回 Hit 列表
 src/cli.py      : 命令行入口，只做编排
@@ -125,12 +125,11 @@ def cmd_fetch_model(args: argparse.Namespace) -> int: ...
 ```python
 def iter_files(root: str, cfg: Config) -> Iterator[str]: ...
 def chunk_text(text: str, cfg: Config) -> list[tuple[int, int, str]]: ...
-def iter_chunks(root: str, cfg: Config) -> Iterator[Chunk]: ...
 ```
 - `iter_files`：递归遍历，过滤扩展名、跳过 > max_file_mb、跳过隐藏目录 `.git`/`node_modules`；`followlinks=False` [MINOR]，捕获 `PermissionError` 跳过。
 - `chunk_text`：返回 `(start, end, text)`，chunk 间保留 overlap。[M6] **空文件 / 全空白文本 → 返回 `[]`**（不产生空 chunk）。
 - 二进制检测：前 4096 字节含 `\x00` 则跳过。
-- [M3] `iter_chunks` 在 `Chunk.mtime` 之外补齐 `Chunk.content_hash`，供 `needs_reindex` 二次校验。
+- [M3] `cli.cmd_index` 计算整文件 `content_hash`，与 `Chunk.mtime`、`size` 一同供 `needs_reindex` 校验；`chunk_id` 由 `sha1(f"{path}:{start}:{end}")` 生成。
 
 ### src/store.py
 ```python
