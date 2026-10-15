@@ -118,10 +118,15 @@ def cmd_fetch_model(args: argparse.Namespace) -> int:
 
     try:
         from fastembed import TextEmbedding  # type: ignore
-    except ImportError as exc:
+    except ImportError:
+        venv_py = (
+            r".venv\Scripts\python"
+            if os.name == "nt"
+            else ".venv/bin/python"
+        )
         print(
             "错误：未安装 fastembed。请在项目虚拟环境中执行：\n"
-            "  .venv\\Scripts\\python -m pip install -r requirements-v0.2.txt",
+            f"  {venv_py} -m pip install -r requirements-v0.2.txt",
             file=sys.stderr,
         )
         return 2

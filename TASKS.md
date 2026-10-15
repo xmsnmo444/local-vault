@@ -252,6 +252,62 @@ V2-8(可选，独立)
 
 ## 汇报区（v0.2）
 
+### [小码酱] macOS 兼容性核查（Owner 提问「mac 用户能使用吗？」）
+- 状态：DONE
+- **结论：能。Intel Mac 与 Apple Silicon（M 芯片）都能跑，且已加 CI 自动验证。**
+
+**代码层核查（跨平台）**
+- 路径操作全走 `os.path.join` / `expanduser` / `abspath`，**无盘符硬编码、无 Windows 专属 API**（无 win32/winreg/ctypes/msvcrt）。
+- `iter_files` 用 `followlinks=False`，对 mac 符号链接目录同样安全。
+
+**依赖层核查（查 PyPI wheel 清单，齐全）**
+| 依赖 | macOS wheel |
+|---|---|
+| `onnxruntime 1.18.1` | ✅ `macosx_11_0_universal2`（Intel + M 芯片通吃） |
+| `fastembed 0.9.0` | ✅ `py3-none-any`（纯 Python） |
+| `tokenizers 0.23.3` | ✅ `macosx_11_0_arm64` + `macosx_10_12_x86_64` |
+| `py-rust-stemmers 0.1.8` | ✅ `arm64` + `x86_64` |
+| `mmh3 5.3.1` | ✅ `universal2` + `x86_64` |
+| `numpy 1.26.4` | ✅ `cp312-macosx_11_0_arm64` 等 |
+
+**发现并修复的问题**
+1. `src/cli.py` 的 `fetch-model` 报错提示**硬编码 Windows 路径** `.venv\Scripts\python` → 改为按 `os.name` 分支（mac 显示 `.venv/bin/python`）。
+2. **CI 原先只在 ubuntu 上跑**，mac 兼容性从未被验证 → 新增 `test-macos` job，矩阵覆盖 `macos-13`(Intel) + `macos-14`(Apple Silicon)，含依赖可安装性 + CLI 端到端冒烟。
+
+**mac 使用注意事项**
+- 要求 **macOS 11.0+**（`onnxruntime 1.18.1` 的 wheel 下限）。
+- 激活虚拟环境用 `source .venv/bin/activate`（不是 `.venv\Scripts\activate`）。
+- Apple Silicon 上建议用 arm64 版 Python；Rosetta 下的 x86_64 Python 也能跑（universal2 wheel 兼容）。
+
+- 验证输出：
+  ```
+  $ .venv\Scripts\python -m pytest tests -q
+  24 passed in 1.17s
+
+  # CI YAML 语法校验
+  YAML 合法 ✓  jobs: ['test-linux', 'test-macos', 'privacy']
+
+  # 跨平台分支验证
+  os.name = nt  → 提示 .venv\Scripts\python
+  os.name != nt → 提示 .venv/bin/python
+  ```
+
+### [小码酱] README 派活（请 Claude 补「平台支持」章节）
+> `README.md` 归 Claude。建议补一节：
+
+```markdown
+## 平台支持
+
+| 平台 | 状态 | 激活虚拟环境 |
+|---|---|---|
+| Windows | ✅ 主要开发平台 | `.venv\Scripts\activate` |
+| macOS (Intel / Apple Silicon) | ✅ 支持，需 macOS 11.0+ | `source .venv/bin/activate` |
+| Linux | ✅ 支持 | `source .venv/bin/activate` |
+
+CI 在 `ubuntu-latest`、`macos-13`(Intel)、`macos-14`(Apple Silicon) 三平台自动验证。
+真模型后端依赖（onnxruntime / tokenizers / py-rust-stemmers）在各平台均有预编译 wheel，无需本地编译。
+```
+
 ### [小码酱] v0.2 — V2-4/V2-5/V2-6/V2-7 已完成（待 Claude 复核 V2-3）
 - 状态：DONE
 - 改动：`src/config.py`、`src/store.py`、`src/cli.py`、`tests/test_offline.py`、`tests/test_semantic.py`（新增）、`.github/workflows/ci.yml`、`requirements-v0.2.txt`（编码修复）、`.gitignore`
