@@ -160,6 +160,20 @@ A: 1000 文件 × ~5000 chunks，BLOB 全扫 < 200ms，查询端到端 < 500ms�
 
 ---
 
+## 平台支持
+
+| 平台 | 状态 | 激活虚拟环境 |
+|---|---|---|
+| Windows | ✅ 主要开发平台 | `.venv\Scripts\activate` |
+| macOS (Intel / Apple Silicon) | ✅ 支持，需 macOS 11.0+ | `source .venv/bin/activate` |
+| Linux | ✅ 支持 | `source .venv/bin/activate` |
+
+CI 在 `ubuntu-latest`、`macos-13`（Intel x86_64）、`macos-14`（Apple Silicon arm64）三平台自动验证。真模型依赖（`onnxruntime 1.18.1` / `tokenizers` / `py-rust-stemmers` / `mmh3` / `numpy`）各平台均有预编译 wheel，无需本地编译 Rust。
+
+> **macOS 注意事项**：需 **macOS 11.0+**（`onnxruntime` wheel 下限）；Apple Silicon 建议用 arm64 版 Python，Rosetta 下的 x86_64 也能跑（universal2 兼容）；`fastembed` 为纯 Python 包，跨平台无需编译。
+
+---
+
 ## 开发
 
 ```bash

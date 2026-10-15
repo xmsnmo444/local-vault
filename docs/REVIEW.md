@@ -147,7 +147,7 @@
 
 * 产物：`.github/workflows/ci.yml` 重写版（双 job：test 断网 + privacy 扫描）
 * 验证：`.venv\Scripts\python -m pytest tests -q → 24 passed in 1.17s`（宿主直接跑会因 onnxruntime 1.31.0 segfault，必须走 .venv）
-* 初版 3 个 bug 已修（确认小码酱修复正确）：
+* 初版 3 个 bug 已修（确认白晞修复正确）：
   1. ✅ `ripgrep` 未安装：已加 `sudo apt-get install -y ripgrep`（privacy job）。
   2. ✅ 测试路径 `local-vault/tests`：已改为 `tests`（仓库根即项目根）。
   3. ✅ `grep -v "_NETWORK"` 死代码：已移除（该常量 v0.1 已删，P2-8）。

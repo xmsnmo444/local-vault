@@ -14,16 +14,16 @@
 
 | ID | 任务 | 负责人 | 改哪些文件 | 状态 | 验收标准 |
 |---|---|---|---|---|---|
-| T1 | 项目骨架 + 配置加载 | 小码酱 | `src/config.py` | DOING | `load_config()` 返回 dataclass，默认值可跑 |
-| T2 | 文件遍历 + 切块 | 小码酱 | `src/indexer.py` | TODO | 遍历可选扩展名，按 token 切块，跳过二进制 |
-| T3 | 本地嵌入 + SQLite 存储 | 小码酱 | `src/store.py` | TODO | 建表、写入、批量插入，幂等 |
-| T4 | 混合检索（语义+关键词） | 小码酱 | `src/search.py` | TODO | Top-K 查询，含 BM25 关键词融合 |
-| T5 | CLI 入口 | 小码酱 | `src/cli.py` | TODO | `python -m src.cli index <dir>` / `search <q>` |
-| T6 | 测试 + 离线断言 | 小码酱 | `tests/test_*.py` | TODO | 有网络调用即 fail |
+| T1 | 项目骨架 + 配置加载 | 白晞 | `src/config.py` | DOING | `load_config()` 返回 dataclass，默认值可跑 |
+| T2 | 文件遍历 + 切块 | 白晞 | `src/indexer.py` | TODO | 遍历可选扩展名，按 token 切块，跳过二进制 |
+| T3 | 本地嵌入 + SQLite 存储 | 白晞 | `src/store.py` | TODO | 建表、写入、批量插入，幂等 |
+| T4 | 混合检索（语义+关键词） | 白晞 | `src/search.py` | TODO | Top-K 查询，含 BM25 关键词融合 |
+| T5 | CLI 入口 | 白晞 | `src/cli.py` | TODO | `python -m src.cli index <dir>` / `search <q>` |
+| T6 | 测试 + 离线断言 | 白晞 | `tests/test_*.py` | TODO | 有网络调用即 fail |
 | T7 | README + 使用文档 | Claude | `README.md` | REVIEW | 安装、用法、隐私声明完整 |
 | D1 | 架构设计文档 | Claude | `docs/DESIGN.md` | DONE | 模块图 + 数据流 + 取舍说明 |
 | D2 | 索引格式契约评审 | Claude | `docs/REVIEW.md` | DONE | 审 T3/T4 的接口，指出问题 |
-| I1 | GitHub Actions：离线测试 | 小码酱 | `.github/workflows/*` | TODO | CI 跑 tests 且断网 |
+| I1 | GitHub Actions：离线测试 | 白晞 | `.github/workflows/*` | TODO | CI 跑 tests 且断网 |
 
 ### 依赖关系
 ```
@@ -35,7 +35,7 @@ T7(Claude) 待 T5 接口稳定后写
 
 ---
 
-## 契约修订申请（小码酱 → Owner/Claude）
+## 契约修订申请（白晞 → Owner/Claude）
 
 > 依据 AGENTS.md 铁律 3「契约先行」，改动接口前必须先在此声明。
 > 来源：Claude D2 预审的 7×[MAJOR]。裁决：采纳 6 项，1 项记为已知局限不修。
@@ -56,7 +56,7 @@ T7(Claude) 待 T5 接口稳定后写
 
 ## 汇报区（AI 在此贴进度 + 运行输出）
 
-### [小码酱] 契约修订 + T1~T6 — v0.1 骨架
+### [白晞] 契约修订 + T1~T6 — v0.1 骨架
 - 状态：DONE（待 Claude 代码级复审 D2）
 - 改动：`docs/CONTRACTS.md`（按上表 7 项修订）、`src/{config,indexer,store,search,cli}.py`、`tests/{test_core,test_offline}.py`
 - 验证输出：
@@ -113,7 +113,7 @@ T7(Claude) 待 T5 接口稳定后写
 - 给 Owner：**「合入」** — 可直接合入打 v0.1 tag；`fastembed` 真模型放 v0.2；I1（CI 离线测试）可作为 v0.1 后首项。
 - 验证输出：`pytest 19 passed` + `rg 零命中`（见 REVIEW.md §4）
 
-### [小码酱] 代码复审修复（P0/P1/P2）— 待 Claude 复核
+### [白晞] 代码复审修复（P0/P1/P2）— 待 Claude 复核
 - 状态：DONE（commit 33c9460）
 - 改动：`src/store.py`、`src/cli.py`、`src/indexer.py`、`tests/*`、`docs/CONTRACTS.md`（未碰 `docs/DESIGN.md`）
 - **P0 修复**
@@ -179,19 +179,19 @@ T7(Claude) 待 T5 接口稳定后写
 | V2-1 | 契约：fastembed 权重路径/加载约定 | Claude | `docs/CONTRACTS.md` | DONE | 明确 model_name、cache_dir、首次下载开关、离线加载路径 |
 | V2-2 | 设计：v0.2 架构（权重分发/回退） | Claude | `docs/DESIGN.md` | DONE | 权重获取流程 + 降级到 hash 的触发条件 |
 | V2-3 | CI 设计评审 | Claude | `docs/REVIEW.md` | REVIEW | 评审我的 ci.yml，指出漏洞 |
-| V2-4 | **打通 fastembed 真嵌入** | 小码酱 | `src/store.py` | TODO | `embed_text` 走真模型；维度对齐 meta；缓存复用 |
-| V2-5 | **权重获取 CLI**（显式、可审计） | 小码酱 | `src/cli.py` | TODO | 新增 `fetch-model` 子命令，**唯一**允许联网的入口 |
-| V2-6 | 真模型回归测试 | 小码酱 | `tests/test_semantic.py` | TODO | 同义查询召回可测；离线加载断言 |
-| V2-7 | **CI 断网跑测试** | 小码酱+Claude | `.github/workflows/ci.yml` | REVIEW | 测试 job 断网、隐私扫描 job 独立、命中即 fail |
-| V2-8 | 相关度评估脚本（可选） | 小码酱 | `scripts/eval_recall.py` | TODO | 给一组 query→期望文件，算 Recall@k |
+| V2-4 | **打通 fastembed 真嵌入** | 白晞 | `src/store.py` | TODO | `embed_text` 走真模型；维度对齐 meta；缓存复用 |
+| V2-5 | **权重获取 CLI**（显式、可审计） | 白晞 | `src/cli.py` | TODO | 新增 `fetch-model` 子命令，**唯一**允许联网的入口 |
+| V2-6 | 真模型回归测试 | 白晞 | `tests/test_semantic.py` | TODO | 同义查询召回可测；离线加载断言 |
+| V2-7 | **CI 断网跑测试** | 白晞+Claude | `.github/workflows/ci.yml` | REVIEW | 测试 job 断网、隐私扫描 job 独立、命中即 fail |
+| V2-8 | 相关度评估脚本（可选） | 白晞 | `scripts/eval_recall.py` | TODO | 给一组 query→期望文件，算 Recall@k |
 
 ## 依赖与并行线
 
 ```
-V2-1(Claude 定契约) ─┬─→ V2-4(小码酱 打通代码) ─→ V2-6(测试)
+V2-1(Claude 定契约) ─┬─→ V2-4(白晞 打通代码) ─→ V2-6(测试)
                      ├─→ V2-5(权重 CLI 入口)
 V2-2(Claude 设计) ───┘
-V2-3(Claude 审 CI) ←── V2-7(小码酱 写 ci.yml)   # 我先写，你再审
+V2-3(Claude 审 CI) ←── V2-7(白晞 写 ci.yml)   # 我先写，你再审
 V2-8(可选，独立)
 ```
 
@@ -207,7 +207,7 @@ V2-8(可选，独立)
 
 ---
 
-## ⚠️ Owner 侧环境探测结论（2026-10-15，小码酱实测）
+## ⚠️ Owner 侧环境探测结论（2026-10-15，白晞实测）
 
 > 在起稿前我实测了本机 fastembed 可行性，**实测结果推翻了两处原假设**，必须先改计划再开工。
 
@@ -252,7 +252,7 @@ V2-8(可选，独立)
 
 ## 汇报区（v0.2）
 
-### [小码酱] macOS 兼容性核查（Owner 提问「mac 用户能使用吗？」）
+### [白晞] macOS 兼容性核查（Owner 提问「mac 用户能使用吗？」）
 - 状态：DONE
 - **结论：能。Intel Mac 与 Apple Silicon（M 芯片）都能跑，且已加 CI 自动验证。**
 
@@ -292,7 +292,7 @@ V2-8(可选，独立)
   os.name != nt → 提示 .venv/bin/python
   ```
 
-### [小码酱] README 派活（请 Claude 补「平台支持」章节）
+### [白晞] README 派活（请 Claude 补「平台支持」章节）
 > `README.md` 归 Claude。建议补一节：
 
 ```markdown
@@ -308,7 +308,7 @@ CI 在 `ubuntu-latest`、`macos-13`(Intel)、`macos-14`(Apple Silicon) 三平台
 真模型后端依赖（onnxruntime / tokenizers / py-rust-stemmers）在各平台均有预编译 wheel，无需本地编译。
 ```
 
-### [小码酱] v0.2 — V2-4/V2-5/V2-6/V2-7 已完成（待 Claude 复核 V2-3）
+### [白晞] v0.2 — V2-4/V2-5/V2-6/V2-7 已完成（待 Claude 复核 V2-3）
 - 状态：DONE
 - 改动：`src/config.py`、`src/store.py`、`src/cli.py`、`tests/test_offline.py`、`tests/test_semantic.py`（新增）、`.github/workflows/ci.yml`、`requirements-v0.2.txt`（编码修复）、`.gitignore`
 - **V2-5 fetch-model**：CLI 新增唯一联网子命令，支持 `--model` / `--cache-dir`，下载后触发一次嵌入以校验权重完整性并报告维度。
@@ -343,7 +343,7 @@ CI 在 `ubuntu-latest`、`macos-13`(Intel)、`macos-14`(Apple Silicon) 三平台
   - `requirements-v0.2.txt` 原为 UTF-16 编码（pip 无法解析），已转 UTF-8。
   - 待办：Claude 复核 V2-3（CI 行号级评审）；契约须补 `resolve_embed_dim()` / `model_cache_dir` 声明。
 
-### [小码酱] v0.2 定版 + 发布物料
+### [白晞] v0.2 定版 + 发布物料
 - 状态：DONE（tag `v0.2` 待打，基于 commit 33b3f84；待 Claude 完成 README 后定版）
 - 改动：`LICENSE`（新增，MIT）、`requirements.txt`（新增，基础依赖）、`docs/RELEASE-v0.2.md`（新增，发布说明）
 - **Owner 决策**：许可证 = **MIT**；**暂不发布**，先继续完善。
@@ -367,7 +367,7 @@ CI 在 `ubuntu-latest`、`macos-13`(Intel)、`macos-14`(Apple Silicon) 三平台
   - 契约补 `resolve_embed_dim()` / `model_cache_dir` 声明
   - V2-3 CI 行号级评审
 
-### [小码酱] README 过时点清单（供 Claude 更新 README 用）
+### [白晞] README 过时点清单（供 Claude 更新 README 用）
 
 `README.md` 目前停留在 v0.1，以下必须改：
 
@@ -391,11 +391,23 @@ CI 在 `ubuntu-latest`、`macos-13`(Intel)、`macos-14`(Apple Silicon) 三平台
 - 备注/发现：契约已更正 embed_dim 512（实测）并明确 fetch-model 为唯一联网入口；设计已补隔离环境与两阶段流程。按 AGENTS.md 边界，仅改 docs/，不碰 src/。
 - 验证输出：纯文档交付；`D:\逆向\local-vault\.venv` 已建（onnxruntime 1.18.1 + fastembed 0.9.0，host 2.5.4/1.31.0 未动），huggingface 权重下载因网络抖动待重试（离线 0.1s 机制已约定）。
 
+### [Claude] README — 平台支持（macOS 兼容性）
+- 状态：DONE
+- 产物：`README.md`（新增"平台支持"节）
+- 备注/发现：按白晞派活，补充 Windows / macOS(双架构) / Linux 三平台状态与激活命令、CI 三平台矩阵说明、wheel 可得性与 macOS 11.0+ 下限。仅改 README，未碰 src/.github。
+- 验证输出：纯文档交付。
+
 ### [Claude] V2-3 — CI 设计评审（待补）
 - 状态：REVIEW
-- 产物：`docs/REVIEW.md`（待补 ci.yml 行号级评审，小码酱提 ci.yml 后追加）
+- 产物：`docs/REVIEW.md`（待补 ci.yml 行号级评审，白晞提 ci.yml 后追加）
 - 备注/发现：ci.yml 初版骨架已交付（test + privacy 双 job），按"你先写我再审"的节奏，待你提交 V2-7 后做行号级评审。
 - 验证输出：见 `.github/workflows/ci.yml`
+
+### [Claude] v0.2.2 — macOS 兼容性确认
+- 状态：DONE
+- 产物：`README.md`（平台支持）
+- 备注/发现：确认白晞核查结论 — 代码层无盘符/Win API，依赖层 wheel 齐全；`src/cli.py` 已按系统分支修正提示，CI 已加 `test-macos` 矩阵双覆盖。仅改 README，未碰 src/.github。
+- 验证输出：见 ci.yml 的 `test-macos` 矩阵与 README"平台支持"节。
 
 ---
 ## 给 Claude 的 v0.2 任务请求（Owner 可直接转发）
@@ -405,7 +417,7 @@ CI 在 `ubuntu-latest`、`macos-13`(Intel)、`macos-14`(Apple Silicon) 三平台
 1) 认领 V2-1（契约：fastembed 权重路径与加载约定）+ V2-2（设计：权重分发与回退）+ V2-3（CI 设计评审）。
 2) 你只改 docs/** 与 README.md，不要碰 src/**、tests/**、.github/**。
 3) 优先交付 V2-1：明确 model_name / cache_dir / 首次下载开关 / 离线加载路径的命名与语义。
-   小码酱要据此打通 src/store.py，命名定得越具体，返工越少。
+   白晞要据此打通 src/store.py，命名定得越具体，返工越少。
 4) 完成后在 TASKS.md 汇报区追加 [Claude] v0.2 段落。
 
 约束：唯一允许联网的是新增的 `fetch-model` 子命令；index/search 必须全程 offline。
