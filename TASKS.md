@@ -156,3 +156,123 @@ T7(Claude) 待 T5 接口稳定后写
 2) 你只改 docs/ 与 README.md，不要碰 src/。
 3) 完成后把产物写进文件，并在 TASKS.md 汇报区追加 [Claude] 段落。
 ```
+
+---
+---
+
+# v0.2 迭代：真模型 + CI 离线门禁
+
+> 目标：把 v0.1 的"哈希嵌入占位"换成**真语义模型**，并把"零上传"从**人工检查**升级为**自动化门禁**。
+> 基线：v0.1 tag（commit 7fee801）。负责人分配遵循单一归属。
+
+## 验收标准
+
+1. `embed_backend=fastembed` 时，语义检索对**同义不同词**的查询能命中（v0.1 哈希嵌入做不到）。
+2. 全程 **offline=True** 跑通——首次下载权重**显式允许**，之后**必须离线加载**，任何隐式联网抛错。
+3. CI 在**断网**环境中 `pytest` 全绿；隐私扫描作为独立 job，命中即 fail。
+4. v0.1 全部 19 项测试**不回归**。
+
+## v0.2 任务表
+
+| ID | 任务 | 负责人 | 改哪些文件 | 状态 | 验收标准 |
+|---|---|---|---|---|---|
+| V2-1 | 契约：fastembed 权重路径/加载约定 | Claude | `docs/CONTRACTS.md` | TODO | 明确 model_name、cache_dir、首次下载开关、离线加载路径 |
+| V2-2 | 设计：v0.2 架构（权重分发/回退） | Claude | `docs/DESIGN.md` | TODO | 权重获取流程 + 降级到 hash 的触发条件 |
+| V2-3 | CI 设计评审 | Claude | `docs/REVIEW.md` | TODO | 评审我的 ci.yml，指出漏洞 |
+| V2-4 | **打通 fastembed 真嵌入** | 小码酱 | `src/store.py` | TODO | `embed_text` 走真模型；维度对齐 meta；缓存复用 |
+| V2-5 | **权重获取 CLI**（显式、可审计） | 小码酱 | `src/cli.py` | TODO | 新增 `fetch-model` 子命令，**唯一**允许联网的入口 |
+| V2-6 | 真模型回归测试 | 小码酱 | `tests/test_semantic.py` | TODO | 同义查询召回可测；离线加载断言 |
+| V2-7 | **CI 断网跑测试** | 小码酱 | `.github/workflows/ci.yml` | TODO | 测试 job 断网、隐私扫描 job 独立、命中即 fail |
+| V2-8 | 相关度评估脚本（可选） | 小码酱 | `scripts/eval_recall.py` | TODO | 给一组 query→期望文件，算 Recall@k |
+
+## 依赖与并行线
+
+```
+V2-1(Claude 定契约) ─┬─→ V2-4(小码酱 打通代码) ─→ V2-6(测试)
+                     ├─→ V2-5(权重 CLI 入口)
+V2-2(Claude 设计) ───┘
+V2-3(Claude 审 CI) ←── V2-7(小码酱 写 ci.yml)   # 我先写，你再审
+V2-8(可选，独立)
+```
+
+**并行策略**：Claude 的 V2-1/V2-2 与我的 V2-4~V2-6 可**同时开工**——因为 v0.1 契约里 `embed_backend`/`model_name`/`embed_dim` 三个钩子已经留好了，我按现有契约先跑，Claude 的契约文档是**补充细节**而非推翻，不会造成返工。
+
+## 关键设计约束（给双方）
+
+1. **唯一联网入口**：只有 `fetch-model` 子命令允许联网。`index`/`search` 全程必须 offline。
+2. **权重路径**：默认 `~/.cache/local-vault/models`（不用 fastembed 默认路径，避免与其他工具混淆）。
+3. **降级策略**：权重缺失 + offline=True → **明确报错并提示** `fetch-model`，**绝不静默降级**到 hash（否则用户以为在用真模型）。
+4. **维度入 meta**：fastembed 的 `embed_dim`（bge-small 为 384）须与 `vec_dim` 一致，不一致抛错要求 reindex（沿用 v0.1 的 M4 机制）。
+5. **CI 双 job**：`test`（断网跑 pytest）+ `privacy`（rg 扫描，命中即 fail）。
+
+---
+
+## ⚠️ Owner 侧环境探测结论（2026-10-15，小码酱实测）
+
+> 在起稿前我实测了本机 fastembed 可行性，**实测结果推翻了两处原假设**，必须先改计划再开工。
+
+### 实测数据
+
+| 项 | 结果 |
+|---|---|
+| fastembed 安装 | ✅ fastembed 0.9.0 装上（依赖 onnxruntime/tokenizers/rust-stemmers） |
+| **onnxruntime 1.31.0** | ❌ **`import onnxruntime` 直接 segfault（exit 0xC0000005）** |
+| **onnxruntime 1.18.1** | ✅ 可用，但会把 numpy 2.x 降到 1.26（污染环境，已回滚） |
+| 模型下载 | ✅ `BAAI/bge-small-zh-v1.5` 成功，缓存 `~/.cache/local-vault/models`（首次 ~16s） |
+| 首次加载 | 23.5s（含下载） |
+| **离线加载** | ✅ `HF_HUB_OFFLINE=1` 下 **0.1s** 加载成功 |
+| **向量维度** | ⚠️ **512，不是 384**（Qdrant 版 bge-small-zh 实际是 512 维） |
+| 语义质量 | ✅ `怎么烧肉` vs `红烧肉怎么做` = **0.8526**；vs `python 逆向` = **0.2149**（区分度强） |
+
+### 由此必须修正的三点
+
+1. **【阻塞】onnxruntime 版本冲突**：本机 `onnxruntime 1.31.0` 会让 fastembed 崩溃；降级到 1.18.1 又污染 numpy。
+   → **V2-4 不能直接在宿主 Python 跑**。必须二选一：
+   - **(A) 独立虚拟环境**：项目自带 `venv` + 固定 `onnxruntime==1.18.1`，宿主环境不动。**（推荐）**
+   - **(B) 换后端**：改用 `sentence-transformers`（走 torch）——但**你本机 torch 的 `c10.dll` 本来就初始化失败**，此路不通。
+   - **(C) 暂缓真模型**：v0.2 只做 CI 门禁（I1），真模型推到环境解决后。
+2. **【契约】`embed_dim` 默认值写错**：契约 v0.1 写 bge-small 是 384，实测 **512**。V2-1 必须更正。
+3. **【设计】首次下载与离线加载要分两个开关**：实测证明"首次下载"和"离线加载"是两个阶段，契约需明确：
+   - 首次：`fetch-model` 显式下载（唯一联网点）
+   - 之后：`HF_HUB_OFFLINE=1` 强制离线加载（0.1s，已验证）
+
+### 对 v0.2 任务表的修订
+
+| ID | 原计划 | 修订后 |
+|---|---|---|
+| V2-4 | 直接打通 fastembed | **先建独立 venv**（`python -m venv .venv` + 固定 onnxruntime==1.18.1），再打通 |
+| V2-1 | 契约写 model_name/cache_dir | **追加**：更正 embed_dim=512；区分 fetch/offline 两阶段 |
+| 新增 V2-0 | — | **项目隔离环境**：`.venv` + `requirements.txt` 锁定 onnxruntime==1.18.1 |
+
+**决策点（请 Owner 拍板）**：
+- 走 **(A) 独立 venv**（推荐，宿主零污染，V2 全量推进）
+- 还是 **(C) 只做 CI，真模型缓一缓**
+
+> 注：探测过程中曾临时降级宿主 onnxruntime/numpy，**已完全回滚**（现为 numpy 2.5.4 / onnxruntime 1.31.0 / opencv 4.11.0）。宿主 torch/tensorflow 的 DLL 报错经核验为**既有问题，非本次操作导致**。
+
+## 汇报区（v0.2）
+
+### [小码酱] v0.2 — 待 Owner 确认后开工
+- 状态：TODO
+- 计划：先落 V2-5（权重 CLI，因为它是唯一联网入口，先把边界划清楚）→ V2-4（打通嵌入）→ V2-6（测试）→ V2-7（CI）→ V2-3（交 Claude 审）
+- 备注：等 Claude V2-1 契约中"权重路径/首次下载开关"确认后，我再动 V2-4，避免路径约定返工
+
+### [Claude] v0.2 — 待认领
+- 状态：TODO
+- 计划：V2-1 → V2-2 → V2-3
+- 备注：起草 `docs/CONTRACTS.md` 的 fastembed 章节时，请**先给权重路径与开关命名**，我据此实现
+
+---
+## 给 Claude 的 v0.2 任务请求（Owner 可直接转发）
+```
+项目 local-vault，进入 v0.2（真模型 + CI 离线门禁）。
+请读 AGENTS.md / docs/CONTRACTS.md / TASKS.md 的 v0.2 章节，然后：
+1) 认领 V2-1（契约：fastembed 权重路径与加载约定）+ V2-2（设计：权重分发与回退）+ V2-3（CI 设计评审）。
+2) 你只改 docs/** 与 README.md，不要碰 src/**、tests/**、.github/**。
+3) 优先交付 V2-1：明确 model_name / cache_dir / 首次下载开关 / 离线加载路径的命名与语义。
+   小码酱要据此打通 src/store.py，命名定得越具体，返工越少。
+4) 完成后在 TASKS.md 汇报区追加 [Claude] v0.2 段落。
+
+约束：唯一允许联网的是新增的 `fetch-model` 子命令；index/search 必须全程 offline。
+权重缺失时明确报错，禁止静默降级到 hash 嵌入。
+```
