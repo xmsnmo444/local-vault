@@ -160,6 +160,8 @@ def cmd_search(args: argparse.Namespace) -> int:
         overrides["embed_backend"] = args.backend
     if getattr(args, "model", None):
         overrides["model_name"] = args.model
+    if getattr(args, "threshold", None) is not None:
+        overrides["semantic_threshold"] = args.threshold
     cfg = load_config(**overrides)
 
     from .store import Store
@@ -240,6 +242,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     ps.add_argument(
         "--rrf-k", type=_positive_int, default=60, help="RRF 常数（默认 60）"
+    )
+    ps.add_argument(
+        "--threshold", type=float, default=0.0, help="语义检索相似度阈值（0.0-1.0，默认 0.0 不过滤）"
     )
     ps.add_argument(
         "--backend", choices=["hash", "fastembed"], help="嵌入后端（须与索引时一致）"

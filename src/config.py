@@ -82,6 +82,7 @@ class Config:
     embed_dim: int = 0  # 0 = 按后端自动推断（见 resolve_embed_dim）
     skip_dirs: frozenset[str] = field(default_factory=lambda: SKIP_DIRS)
     model_cache_dir: str = ""  # 空 = 默认 ~/.cache/local-vault/models
+    semantic_threshold: float = 0.0  # 语义检索相似度阈值，低于此值的结果被过滤
 
     def resolve_embed_dim(self) -> int:
         """[v0.2] 向量维度按后端推断；显式设置 embed_dim>0 时以显式值为准。
@@ -118,6 +119,10 @@ class Config:
         if self.embed_backend not in ("hash", "fastembed"):
             raise ValueError(
                 f"embed_backend 只支持 'hash' / 'fastembed'，当前 {self.embed_backend!r}"
+            )
+        if not 0.0 <= self.semantic_threshold <= 1.0:
+            raise ValueError(
+                f"semantic_threshold 必须在 [0.0, 1.0]，当前 {self.semantic_threshold}"
             )
 
     @property

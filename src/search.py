@@ -64,6 +64,11 @@ def search(
     # 语义路
     qvec = embed_query(q, cfg, store)
     sem_pairs = store.search_vector(qvec, fanout)
+
+    # 应用相似度阈值过滤
+    if cfg.semantic_threshold > 0.0:
+        sem_pairs = [(cid, score) for cid, score in sem_pairs if score >= cfg.semantic_threshold]
+
     sem_ids = [cid for cid, _ in sem_pairs]
 
     # 关键词路
