@@ -1,0 +1,147 @@
+"""tests/test_core.py — 切块、存储、检索、隐私的核心测试。"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from src.config import load_config  # noqa: E402
+from src.indexer import chunk_text, content_hash, iter_files  # noqa: E402
+from src.search import search  # noqa: E402
+from src.store import Chunk, Store  # noqa: E402
+
+
+# ---------- chunk_text ----------
+def test_chunk_empty_returns_empty():
+    cfg = load_config(db_path=":memory:", chunk_size=10, chunk_overlap=2)
+    assert chunk_text("", cfg) == []
+    assert chunk_text("   \n\t  ", cfg) == []
+
+
+def test_chunk_progress_and_overlap():
+    cfg = load_config(db_path=":memory:", chunk_size=10, chunk_overlap=2)
+    text = "abcdefghijklmnopqrstuvwxyz"  # 26 字符
+    spans = chunk_text(text, cfg)
+    assert spans, "应产出至少一个块"
+    # 覆盖完整
+    assert spans[0][0] == 0
+    assert spans[-1][1] == len(text)
+    # 相邻块有重叠 step = 10-2 = 8
+    for a, b in zip(spans, spans[1:]):
+        assert b[0] == a[0] + 8, f"步进错误: {a[0]} -> {b[0]}"
+
+
+def test_chunk_no_infinite_loop_when_size_equals_overlap():
+    """validate() 应拦截 overlap >= size。"""
+    try:
+        load_config(db_path=":memory:", chunk_size=5, chunk_overlap=5)
+        raise AssertionError("overlap>=size 应被 validate 拦截")
+    except ValueError:
+        pass
+
+
+# ---------- iter_files ----------
+def test_iter_files_filters(tmp_path):
+    cfg = load_config(db_path=":memory:", max_file_mb=0.001)
+    (tmp_path / "a.md").write_text("hello world", encoding="utf-8")
+    (tmp_path / "b.exe").write_text("nope", encoding="utf-8")  # 扩展名不符
+    (tmp_path / "big.md").write_text("x" * 5000, encoding="utf-8")  # 超限
+    (tmp_path / "bin.md").write_bytes(b"\x00\x01\x02binary")  # 二进制
+    sub = tmp_path / "node_modules"
+    sub.mkdir()
+    (sub / "c.md").write_text("skip me", encoding="utf-8")
+
+    found = {Path(p).name for p in iter_files(str(tmp_path), cfg)}
+    assert "a.md" in found
+    assert "b.exe" not in found
+    assert "big.md" not in found
+    assert "bin.md" not in found
+    assert "c.md" not in found
+
+
+# ---------- store + search ----------
+def test_upsert_prunes_orphans(tmp_path):
+    """[M2] 同一 path 重索引不应残留旧 chunk。"""
+    cfg = load_config(db_path=str(tmp_path / "v.db"), chunk_size=10, chunk_overlap=2)
+    with Store(cfg) as store:
+        store.init_schema()
+        store.check_model_consistency()
+        p = str(tmp_path / "doc.md")
+        c1 = [
+            Chunk("id1", p, 0, 10, "aaaaaaaaaa", 1.0, "h"),
+            Chunk("id2", p, 8, 18, "aaaaaaaaaa", 1.0, "h"),
+        ]
+        store.upsert_chunks(c1)
+        assert store.count() == 2
+
+        # 文件编辑后只产生一个 chunk
+        c2 = [Chunk("id9", p, 0, 3, "bb", 2.0, "h2")]
+        store.upsert_chunks(c2)
+        assert store.count() == 1, "旧 chunk 未被清理（孤儿残留）"
+        rows = list(store.all_chunks())
+        assert rows[0].chunk_id == "id9"
+
+
+def test_needs_reindex_mtime_and_hash(tmp_path):
+    cfg = load_config(db_path=str(tmp_path / "v.db"))
+    with Store(cfg) as store:
+        store.init_schema()
+        store.check_model_consistency()
+        p = str(tmp_path / "d.md")
+        store.upsert_chunks([Chunk("x", p, 0, 5, "hello", 100.0, "hashA")])
+        assert store.needs_reindex(p, 100.0, "hashA") is False
+        assert store.needs_reindex(p, 200.0, "hashA") is True   # mtime 变
+        assert store.needs_reindex(p, 100.0, "hashB") is True   # 内容变
+        assert store.needs_reindex(str(tmp_path / "new.md"), 0.0) is True
+
+
+def test_model_consistency_mismatch(tmp_path):
+    """[M4] 维度不一致应报错。"""
+    db = str(tmp_path / "v.db")
+    cfg = load_config(db_path=db, embed_dim=256)
+    with Store(cfg) as store:
+        store.init_schema()
+        store.check_model_consistency()
+    cfg2 = load_config(db_path=db, embed_dim=128)
+    with Store(cfg2) as store2:
+        store2.init_schema()
+        try:
+            store2.check_model_consistency()
+            raise AssertionError("维度不一致竟未报错")
+        except RuntimeError as exc:
+            assert "不匹配" in str(exc) or "reindex" in str(exc)
+
+
+def test_search_returns_hits(tmp_path):
+    cfg = load_config(db_path=str(tmp_path / "v.db"), chunk_size=64, chunk_overlap=8)
+    with Store(cfg) as store:
+        store.init_schema()
+        store.check_model_consistency()
+        p = str(tmp_path / "notes.md")
+        store.upsert_chunks(
+            [
+                Chunk("a", p, 0, 20, "python 逆向 反调试 崩溃定位", 1.0, "h"),
+                Chunk("b", p, 20, 40, "今天天气很好适合钓鱼", 1.0, "h"),
+            ]
+        )
+        hits = search("逆向", cfg, store, top_k=5)
+        assert hits, "关键词命中应为空"
+        assert any("逆向" in h.text for h in hits)
+        assert all(h.source in ("semantic", "keyword", "hybrid") for h in hits)
+
+
+def test_search_empty_query(tmp_path):
+    cfg = load_config(db_path=str(tmp_path / "v.db"))
+    with Store(cfg) as store:
+        store.init_schema()
+        store.check_model_consistency()
+        assert search("", cfg, store) == []
+        assert search("   ", cfg, store) == []
+
+
+def test_content_hash_stable():
+    assert content_hash("abc") == content_hash("abc")
+    assert content_hash("abc") != content_hash("abd")
+    assert len(content_hash("abc")) == 40

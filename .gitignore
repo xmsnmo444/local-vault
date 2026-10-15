@@ -1,6 +1,8 @@
 # local-vault ignores
 *.db
 *.db-journal
+*.db-wal
+*.db-shm
 *.sqlite
 __pycache__/
 *.pyc
@@ -11,3 +13,7 @@ venv/
 # local models / caches
 models/
 .cache/
+# demo corpus（本地演练用，不入库）
+demo/
+# 契约修订工作区
+.pytest_cache/
