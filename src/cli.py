@@ -53,7 +53,7 @@ def cmd_index(args: argparse.Namespace) -> int:
                 try:
                     st = os.stat(path)
                     text = read_text(path)
-                except OSError:
+                except (OSError, UnicodeDecodeError):
                     skipped_error += 1
                     continue
 

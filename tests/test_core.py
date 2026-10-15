@@ -8,7 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from src.config import load_config  # noqa: E402
-from src.indexer import chunk_text, content_hash, iter_files  # noqa: E402
+from src.indexer import chunk_text, content_hash, iter_files, read_text  # noqa: E402
 from src.search import search  # noqa: E402
 from src.store import Chunk, Store  # noqa: E402
 
@@ -253,5 +253,33 @@ def test_upsert_transaction_safety(tmp_path):
         chunks = list(store.all_chunks())
         assert chunks[0].chunk_id == "id1"
         assert chunks[0].text == "good"
+
+
+def test_read_text_encoding_fallback(tmp_path):
+    """[P3] read_text 应先尝试 UTF-8，再回退 GB18030，都失败则抛错。"""
+    # UTF-8 文件
+    utf8_file = tmp_path / "utf8.txt"
+    utf8_file.write_bytes("你好世界".encode("utf-8"))
+    assert read_text(str(utf8_file)) == "你好世界"
+
+    # UTF-8 with BOM
+    bom_file = tmp_path / "bom.txt"
+    bom_file.write_bytes(b"\xef\xbb\xbf\xe4\xbd\xa0\xe5\xa5\xbd")  # BOM + "你好"
+    assert read_text(str(bom_file)) == "你好"
+
+    # GBK 文件
+    gbk_file = tmp_path / "gbk.txt"
+    gbk_file.write_bytes("测试GBK编码".encode("gbk"))
+    assert read_text(str(gbk_file)) == "测试GBK编码"
+
+    # 无效编码（既不是 UTF-8 也不是 GB18030）
+    bad_file = tmp_path / "bad.txt"
+    bad_file.write_bytes(b"\xff\xfe\x00\x01\x02\x03")
+    try:
+        read_text(str(bad_file))
+        raise AssertionError("无效编码应抛出 UnicodeDecodeError")
+    except UnicodeDecodeError:
+        pass  # 预期行为
+
 
 

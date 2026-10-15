@@ -79,9 +79,27 @@ def iter_files(root: str, cfg: Config) -> Iterator[str]:
 
 
 def read_text(path: str) -> str:
-    """读取文本，坏字节忽略，绝不因编码中断遍历。"""
-    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
-        return fh.read()
+    """读取文本，依次尝试 UTF-8 和 GB18030，失败则跳过。
+
+    - utf-8-sig: 自动去除 BOM
+    - gb18030: GBK 的超集，覆盖所有中文编码
+    - 都失败时抛 UnicodeDecodeError，由调用方决定如何处理
+    """
+    # 先尝试 UTF-8
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            return fh.read()
+    except UnicodeDecodeError:
+        pass
+
+    # 回退到 GB18030
+    try:
+        with open(path, "r", encoding="gb18030") as fh:
+            return fh.read()
+    except UnicodeDecodeError as exc:
+        # 两种编码都失败，记录并重新抛出
+        log.warning("编码检测失败，跳过 %s: %s", path, exc)
+        raise
 
 
 def content_hash(text: str) -> str:
@@ -129,7 +147,7 @@ def iter_chunks(root: str, cfg: Config) -> "Iterator[Chunk]":
         try:
             text = read_text(path)
             st = os.stat(path)
-        except (PermissionError, OSError) as exc:
+        except (PermissionError, OSError, UnicodeDecodeError) as exc:
             log.warning("读取失败，跳过 %s: %s", path, exc)
             continue
 
