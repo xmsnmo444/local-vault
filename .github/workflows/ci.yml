@@ -5,11 +5,11 @@ on: [push, pull_request]
 jobs:
   # ---- Job 1：Linux 断网跑测试（"零上传"的自动化守门）----
   test-linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -21,21 +21,11 @@ jobs:
 
       - name: 断网执行 pytest
         run: |
-          # 用 unshare 剥离网络命名空间：任何联网企图直接失败。
-          # 真模型用例会因无本地权重自动 skip，故 CI 不依赖网络。
-          if command -v unshare >/dev/null 2>&1; then
-            if unshare -rn python -c "import socket;s=socket.socket();s.settimeout(1);s.connect(('1.1.1.1',53))" 2>/dev/null; then
-              # 能连上 → unshare 没起到隔离作用，退化
-              echo "::warning::unshare 未隔离网络，退化为普通 pytest"
-              python -m pytest tests -q
-            else
-              echo "网络已隔离，在此环境执行测试"
-              unshare -rn python -m pytest tests -q
-            fi
-          else
-            echo "::warning::无 unshare，退化为普通 pytest"
-            python -m pytest tests -q
-          fi
+          # Avoid unprivileged user namespaces (-r), which can fail at uid_map.
+          # Create only a network namespace; stop if isolation cannot be created.
+          # Preserve setup-python's interpreter and run tests as the runner user.
+          python_bin="$(command -v python)"
+          sudo -n unshare --net -- runuser --user "$(id -un)" -- "$python_bin" -m pytest tests -q
 
       - name: 断言离线哨兵生效
         run: |
@@ -64,9 +54,9 @@ jobs:
         os: [macos-13, macos-14]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.12'
 
@@ -96,9 +86,9 @@ jobs:
 
   # ---- Job 3：隐私扫描（命中即 fail）----
   privacy:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: 安装 ripgrep
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ripgrep
