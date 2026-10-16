@@ -124,7 +124,7 @@ See `docs/CONTRACTS.md` checklist, `docs/REVIEW.md` `[CRITICAL]` veto.
 | macOS (Intel / Apple Silicon) | ✅ macOS 11.0+ | `source .venv/bin/activate` |
 | Linux | ✅ | `source .venv/bin/activate` |
 
-CI tests on `ubuntu-latest`, `macos-13` (Intel), `macos-14` (Apple Silicon). All deps have prebuilt wheels.
+CI tests on `ubuntu-24.04`, `macos-15-intel` (Intel), `macos-15` (Apple Silicon). All deps have prebuilt wheels.
 
 ---
 
